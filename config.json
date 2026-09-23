@@ -1,7 +1,6 @@
 {
-  "owner": "Jan",
+  "owner": "江江",
   "timeZone": "Asia/Shanghai",
-  "calendarMode": "icloud",
   "calendarSources": [
     "icloud"
   ],
@@ -29,13 +28,13 @@
     "restday": [
       [
         "12:00",
-        "18:00"
+        "16:00"
       ]
     ],
     "convention": [
       [
         "12:00",
-        "18:00"
+        "16:00"
       ]
     ]
   },
@@ -43,10 +42,169 @@
   "leadHours": {
     "workday": 4,
     "restday": 24,
-    "convention": 2
+    "convention": 24
   },
   "cosLeadDays": 30,
   "daysAhead": 90,
   "bufferMinutes": 60,
-  "weeklyMax": 3
+  "weeklyMax": null,
+  "rules": {
+    "busy": [
+      "聚会",
+      "拍照",
+      "cos",
+      "【休息】"
+    ],
+    "booked": [
+      "已约"
+    ],
+    "reserve": [
+      "预留"
+    ],
+    "restday": [
+      "调休"
+    ],
+    "workday": [
+      "补班"
+    ],
+    "semi": [
+      {
+        "word": "漫展",
+        "seenBy": [
+          "con",
+          "close"
+        ],
+        "others": "busy"
+      },
+      {
+        "word": "回老家",
+        "seenBy": [
+          "elder",
+          "close"
+        ],
+        "others": "busy"
+      }
+    ]
+  },
+  "levels": {
+    "friend": {
+      "name": "朋友",
+      "ordinary": true,
+      "simple": false
+    },
+    "elder": {
+      "name": "长辈",
+      "ordinary": true,
+      "simple": true
+    },
+    "con": {
+      "name": "圈内好友",
+      "ordinary": false,
+      "simple": false
+    },
+    "close": {
+      "name": "密友",
+      "ordinary": true,
+      "simple": false
+    }
+  },
+  "projects": [
+    {
+      "project": "吃饭",
+      "levels": [
+        "friend"
+      ],
+      "rest": [
+        "14:00-18:00"
+      ],
+      "leadHours": 24
+    },
+    {
+      "project": "吃饭",
+      "levels": [
+        "friend",
+        "con"
+      ],
+      "tags": [
+        "住得近"
+      ],
+      "work": [
+        "18:30-20:00"
+      ],
+      "leadHours": 2
+    },
+    {
+      "project": "逛街",
+      "levels": [
+        "friend"
+      ],
+      "rest": [
+        "14:00-18:00"
+      ],
+      "leadHours": 24
+    },
+    {
+      "project": "拍照",
+      "levels": [
+        "con"
+      ],
+      "rest": [
+        "14:00-18:00"
+      ],
+      "leadHours": 24
+    },
+    {
+      "project": "cos",
+      "levels": [
+        "con",
+        "close"
+      ],
+      "rest": [],
+      "work": [],
+      "slot": false,
+      "leadHours": 720
+    },
+    {
+      "project": "旅行",
+      "levels": [
+        "close"
+      ],
+      "rest": [],
+      "slot": false,
+      "leadHours": 336
+    },
+    {
+      "project": "吃饭",
+      "levels": [
+        "close"
+      ],
+      "rest": [
+        "10:00-21:00"
+      ],
+      "work": [
+        "18:30-21:00"
+      ],
+      "leadHours": 2
+    },
+    {
+      "project": "逛街",
+      "levels": [
+        "close"
+      ],
+      "rest": [
+        "10:00-21:00"
+      ],
+      "leadHours": 2
+    },
+    {
+      "project": "拍照",
+      "levels": [
+        "close"
+      ],
+      "rest": [
+        "10:00-21:00"
+      ],
+      "leadHours": 24
+    }
+  ]
 }

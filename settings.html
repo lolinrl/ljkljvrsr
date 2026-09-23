@@ -16,21 +16,56 @@
 <div id="r-semi"></div><button type="button" id="r-add">＋ 加一种半开放日</button></fieldset>
 <fieldset><legend>保护电量</legend><div><label>活动前后留出（分钟，只用于休息日） <input id="buffer" type="number" min="0" max="240" step="15" value="60"></label><label>每周最多约几次 <input id="weekly" type="number" min="1" max="14" value="3"></label></div><small>日历里写「已约-xx」的算一次；当天其他时间自动关闭。</small></fieldset><button type="submit">下载 config.json</button> <span id="result" role="status"></span>
 </form>
-<section class="codes"><h2>生成分享码</h2><p>一人一个。先把备忘录里的完整清单粘贴到下面「你的完整清单」（第一次用就空着），再生成：新码会自动加进清单。分享码本身用微信单独发给对方。</p>
+<section class="codes" id="codes"><h2>分享码清单</h2>
+<p>清单只保存在你电脑上的一个文件里（建议放在 iCloud 云盘，比如 <code>myslot-codes.json</code>）。每次：打开清单文件 → 增删 → 保存清单文件 → 复制给 Secret。这里的一切都只在你的电脑上处理，不会上传。</p>
+<div class="row"><label class="filebtn">打开清单文件 <input id="l-open" type="file" accept=".json,application/json"></label><button type="button" id="l-save">保存清单文件</button><button type="button" id="l-copy">复制给 Secret</button><button type="button" id="l-clean">清理已过期</button></div>
+<p id="l-status" class="status-line">还没有打开清单。第一次使用可以直接开始添加。</p>
+<div class="table-wrap"><table id="l-table"><thead><tr><th>分享码</th><th>档位</th><th>额外</th><th>称呼</th><th>有效期</th><th>发放</th><th>备注</th><th></th></tr></thead><tbody></tbody></table></div>
+<h3>添加一个人</h3>
 <div class="row"><label>对方代号 <input id="c-who" placeholder="比如 星星"></label><label>档位 <select id="c-level"><option value="friend">朋友</option><option value="elder">长辈</option><option value="con">圈内好友</option><option value="close">密友</option></select></label></div>
 <div class="row"><label>额外能看到的半开放日 <input id="c-also" placeholder="比如 回老家，多个用逗号"></label><label>给 Ta 的预留代号 <input id="c-reserve" placeholder="日历写 预留-xx 的 xx，可空"></label></div>
-<div class="row"><label>Ta 看到的称呼 <input id="c-name" placeholder="空着就显示 Jan"></label><label><input id="c-forever" type="checkbox"> 永久有效</label><label>失效日期 <input id="c-until" type="date"></label></div>
-<button type="button" id="c-make">生成</button><small>注意：每点一次都会生成一个新的码。放进 Secret 的那一行，和发给对方的码，必须来自同一次生成。</small><pre id="c-out" hidden></pre>
-<h2>你的完整清单</h2><p>这就是 Secret 里应该放的全部内容。也可以在这里检查某个码是否对得上。只在你的电脑上处理，不会上传。</p>
-<textarea id="k-list" rows="5" style="width:100%" placeholder='[{"code": "...", ...}]'></textarea>
-<div class="row"><label>要检查的码 <input id="k-code"></label><button type="button" id="k-run">检查</button></div><pre id="k-out" hidden></pre></section>
+<div class="row"><label>Ta 看到的称呼 <input id="c-name" placeholder="空着就显示页面称呼"></label><label><input id="c-forever" type="checkbox"> 永久有效</label><label>失效日期 <input id="c-until" type="date"></label></div>
+<div class="row"><label style="flex:1">备注（只给你自己看） <input id="c-note" style="width:100%" placeholder="比如 漫展群认识的"></label></div>
+<button type="button" id="c-make">生成并加入清单</button><pre id="c-out" hidden></pre>
+<details><summary>检查某个码 / 手动粘贴清单</summary>
+<p>也可以把清单内容直接粘贴到这里再点「载入」。</p><textarea id="k-list" rows="4" style="width:100%" placeholder='[{"code": "...", ...}]'></textarea>
+<div class="row"><button type="button" id="k-load">载入</button><label>要检查的码 <input id="k-code"></label><button type="button" id="k-run">检查</button></div><pre id="k-out" hidden></pre></details>
+</section>
 <script>
-(()=>{const $=id=>document.getElementById(id);const norm=c=>c.normalize('NFKC').replace(/[\u2010-\u2015\u2212\uff0d\u30fc]/g,'-').replace(/\s+/g,'').toLowerCase();
-$('k-run').onclick=()=>{const out=$('k-out');out.hidden=false;let list;try{list=JSON.parse($('k-list').value)}catch(e){out.textContent='格式有误：'+e.message+'\n常见原因：用了中文引号或逗号、最后一项后面多了逗号、缺少外层方括号。';return}if(!Array.isArray(list)){out.textContent='最外层需要是方括号 [ ]';return}const today=new Date().toISOString().slice(0,10);const lines=[`格式正确，共 ${list.length} 个码。`];const hit=list.find(e=>e&&typeof e.code==='string'&&norm(e.code)===norm($('k-code').value));for(const e of list){const c=typeof e?.code==='string'?norm(e.code):'';if(c.length<6)lines.push(`「${e?.code}」太短，会被忽略`);if(e?.until&&e.until<today)lines.push(`「${e.code}」已在 ${e.until} 过期`);if(e?.level&&!['friend','elder','con','close'].includes(e.level))lines.push(`「${e.code}」的 level 写错了，整个清单会被停用`)}lines.push(hit?`✓ 找到了这个码（档位 ${hit.level||'friend'}）。如果网页还是打不开，说明网页上的数据还没更新：重新运行 Actions，等 10 分钟。`:'✗ 清单里没有这个码。请确认 Secret 里的内容和发给对方的码来自同一次生成。');out.textContent=lines.join('\n')};
+(()=>{const $=id=>document.getElementById(id);
+const LEVEL={friend:'朋友',elder:'长辈',con:'圈内好友',close:'密友'};
+const norm=c=>c.normalize('NFKC').replace(/[‐-―−－ー]/g,'-').replace(/\s+/g,'').toLowerCase();
+const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
+let list=[],dirty=false;
+const status=t=>$('l-status').textContent=t;
+const expired=e=>!e.forever&&e.until&&e.until<today();
+function setDirty(v){dirty=v;if(v)status(`清单有改动（${list.length} 个码），记得「保存清单文件」，再「复制给 Secret」。`)}
+function render(){const body=$('l-table').querySelector('tbody');body.replaceChildren();if(!list.length){const tr=document.createElement('tr');const td=document.createElement('td');td.colSpan=8;td.textContent='清单是空的';tr.append(td);body.append(tr);return}
+ for(const [i,e] of list.entries()){const tr=document.createElement('tr');if(expired(e))tr.className='expired';
+  const extra=[...(e.also||[]),...(e.home?['回老家']:[]),...(e.reserve?['预留:'+e.reserve]:[]),...(e.see||[]).map(v=>'看:'+v)].join('、');
+  const cells=[e.code,LEVEL[e.level||'friend']||e.level,extra,e.name||'',e.forever?'永久':e.until?(expired(e)?e.until+'（已过期）':'到 '+e.until):'不限',e.given||'',e.note||''];
+  for(const c of cells){const td=document.createElement('td');td.textContent=c;tr.append(td)}
+  const td=document.createElement('td');const del=document.createElement('button');del.type='button';del.textContent='收回';del.onclick=()=>{if(confirm(`收回「${e.code}」？保存并更新 Secret 后，这个码就打不开了。`)){list.splice(i,1);setDirty(true);render()}};td.append(del);tr.append(td);body.append(tr)}}
+function load(data,source){if(!Array.isArray(data))throw Error('最外层需要是方括号 [ ]');for(const e of data)if(!e||typeof e.code!=='string')throw Error('有一项缺少 code');list=data;dirty=false;render();status(`已载入${source}：${list.length} 个码${list.some(expired)?'，其中有已过期的，可以「清理已过期」':''}。`)}
+$('l-open').onchange=async ev=>{const f=ev.target.files[0];if(!f)return;try{load(JSON.parse(await f.text()),'「'+f.name+'」')}catch(err){status('打不开这个文件：'+err.message)}ev.target.value=''};
+$('k-load').onclick=()=>{try{load(JSON.parse($('k-list').value),'粘贴的内容')}catch(err){status('格式有误：'+err.message+'。常见原因：中文引号或逗号、最后一项后面多了逗号。')}};
+$('l-save').onclick=()=>{const blob=new Blob([JSON.stringify(list,null,2)+'\n'],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='myslot-codes.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),30000);dirty=false;status('已下载 myslot-codes.json。用它替换掉原来那个文件（比如 iCloud 云盘里的），然后「复制给 Secret」。')};
+$('l-copy').onclick=async()=>{const secret=JSON.stringify(list.filter(e=>!expired(e)).map(({note,given,...rest})=>rest));try{await navigator.clipboard.writeText(secret);status('已复制。到 GitHub 打开 Secret MYSLOT_SHARE_CODES → Update → 全部替换成刚复制的内容 → 运行一次 Actions。（备注和发放日期不会放进 Secret。）')}catch{$('k-list').value=secret;$('k-list').closest('details').open=true;status('浏览器不让自动复制，内容已放进下面的框里，请手动全选复制。')}};
+$('l-clean').onclick=()=>{const before=list.length;list=list.filter(e=>!expired(e));const n=before-list.length;render();if(n)setDirty(true);else status('没有过期的码。')};
 $('c-forever').onchange=()=>{$('c-until').disabled=$('c-forever').checked;if($('c-forever').checked)$('c-until').value=''};
-$('c-make').onclick=()=>{const who=$('c-who').value.trim()||'友';const n=new Uint32Array(1);crypto.getRandomValues(n);const code=`${who}-${String(n[0]%1e6).padStart(6,'0')}`;const entry={code,level:$('c-level').value};const also=$('c-also').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean);if(also.length)entry.also=also;if($('c-reserve').value.trim())entry.reserve=$('c-reserve').value.trim();if($('c-name').value.trim())entry.name=$('c-name').value.trim();if($('c-forever').checked)entry.forever=true;else if($('c-until').value)entry.until=$('c-until').value;let list=[];try{const old=$('k-list').value.trim();list=old?JSON.parse(old):[];if(!Array.isArray(list))throw 0}catch{$('c-out').hidden=false;$('c-out').textContent='下面「你的完整清单」格式有误，先用「检查」修好再生成。';return}list.push(entry);const full='[\n'+list.map(e=>'  '+JSON.stringify(e)).join(',\n')+'\n]';$('k-list').value=full;$('k-code').value=code;$('c-out').hidden=false;$('c-out').textContent=`发给对方的分享码：${code}\n\n已加进下面的完整清单。把完整清单整段复制到备忘录，再整段粘贴到 Secret MYSLOT_SHARE_CODES（点 Update，替换原来的全部内容）。`}})();
+$('c-make').onclick=()=>{const who=$('c-who').value.trim();if(!who){$('c-out').hidden=false;$('c-out').textContent='先填对方代号。';return}
+ let code;do{const n=new Uint32Array(1);crypto.getRandomValues(n);code=`${who}-${String(n[0]%1e6).padStart(6,'0')}`}while(list.some(e=>norm(e.code)===norm(code)));
+ const entry={code,level:$('c-level').value};const also=$('c-also').value.split(/[,，、]/).map(v=>v.trim()).filter(Boolean);if(also.length)entry.also=also;
+ if($('c-reserve').value.trim())entry.reserve=$('c-reserve').value.trim();if($('c-name').value.trim())entry.name=$('c-name').value.trim();
+ if($('c-forever').checked)entry.forever=true;else if($('c-until').value)entry.until=$('c-until').value;
+ entry.given=today();if($('c-note').value.trim())entry.note=$('c-note').value.trim();
+ list.push(entry);render();setDirty(true);for(const id of ['c-who','c-also','c-reserve','c-name','c-note','c-until'])$(id).value='';$('c-forever').checked=false;$('c-until').disabled=false;
+ $('c-out').hidden=false;$('c-out').textContent=`发给 ${who} 的分享码：${code}\n（整串都要发，包括前面的代号）`};
+$('k-run').onclick=()=>{const out=$('k-out');out.hidden=false;const hit=list.find(e=>norm(e.code)===norm($('k-code').value));out.textContent=!list.length?'先打开或粘贴清单。':hit?(expired(hit)?`找到了，但已在 ${hit.until} 过期。`:`✓ 找到了（${LEVEL[hit.level||'friend']}）。如果网页还是打不开，重新「复制给 Secret」并运行 Actions，等 10 分钟。`):'✗ 清单里没有这个码。'};
+addEventListener('beforeunload',ev=>{if(dirty){ev.preventDefault();ev.returnValue=''}});
+render();})();
 </script>
-<style>.codes{margin-top:28px}.codes .row{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0}.codes pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f3f3;padding:12px;border-radius:10px}</style><p class="hint">在选中的日历写 <code>【漫展-ijoy】</code>，页面只显示 ijoy；写 <code>【休息】</code>、<code>【cos】</code> 或 <code>【拍照】</code> 会整天关闭，朋友看不到原因。同一天有休息和漫展时，以休息为准。</p><p><small>下载 config.json 并上传到 GitHub 仓库根目录，提交后重新运行 Actions。iCloud、Google、飞书的日历选择分别填写到对应 Secret；不能把密码放进公开配置。</small></p></main>
+<style>.codes{margin-top:28px}.codes .row{display:flex;flex-wrap:wrap;gap:10px;margin:8px 0;align-items:center}.codes pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f3f3;padding:12px;border-radius:10px}.table-wrap{overflow-x:auto;margin:10px 0}#l-table{border-collapse:collapse;width:100%;font-size:13px}#l-table th,#l-table td{border-bottom:1px solid #eee4e2;padding:6px 8px;text-align:left;white-space:nowrap}#l-table tr.expired td{color:#b0a6aa;text-decoration:line-through}#l-table tr.expired td:last-child{text-decoration:none}.filebtn{display:inline-block;border:1px solid #e3d6d4;border-radius:10px;padding:6px 12px;cursor:pointer;background:#fff}.filebtn input{display:none}.status-line{font-size:13px;color:#8a5f68;background:#fbf3f2;padding:8px 12px;border-radius:10px}.codes details{margin-top:18px}</style><p class="hint">在选中的日历写 <code>【漫展-ijoy】</code>，页面只显示 ijoy；写 <code>【休息】</code>、<code>【cos】</code> 或 <code>【拍照】</code> 会整天关闭，朋友看不到原因。同一天有休息和漫展时，以休息为准。</p><p><small>下载 config.json 并上传到 GitHub 仓库根目录，提交后重新运行 Actions。iCloud、Google、飞书的日历选择分别填写到对应 Secret；不能把密码放进公开配置。</small></p></main>
 <script>
 const $=id=>document.getElementById(id),labels=['一','二','三','四','五','六','日'];let existing={};
 const chosenSources=()=>[...document.querySelectorAll('[name=source]:checked')].map(x=>x.value);

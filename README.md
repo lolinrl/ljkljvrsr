@@ -31,7 +31,7 @@
 
 没有分享码的人打开网页，只能看到「私人日程 · 请输入分享码」。日历内容在 GitHub Actions 里就用每个分享码分别加密，网页和仓库里只有乱码，按 F12 也看不到内容。
 
-用 `settings.html` 底部的「生成分享码」生成，把得到的那一行加进仓库 **Settings → Secrets and variables → Actions → Secrets** 的 `MYSLOT_SHARE_CODES`：
+用 `settings.html` 底部的「分享码清单」管理：清单保存在你自己电脑上的 `myslot-codes.json`（建议放在 iCloud 云盘），每次「打开清单文件 → 添加或收回 → 保存清单文件 → 复制给 Secret」，然后粘贴到仓库 **Settings → Secrets and variables → Actions → Secrets** 的 `MYSLOT_SHARE_CODES`（Update，整段替换）。清单文件里的备注和发放日期不会进入 Secret。Secret 的内容长这样：
 
 ```json
 [

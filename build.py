@@ -572,13 +572,34 @@ def seal_for_codes(result, codes, today, rules=None):
     return {'schema': 3, 'iterations': SHARE_ITERATIONS, 'sealed': sealed}, len(sealed), skipped
 
 
+REQUIRED_CONFIG = ('owner', 'timeZone', 'schedule', 'windows', 'stepMinutes', 'leadHours', 'cosLeadDays', 'daysAhead')
+
+
+def load_config():
+    """MYSLOT_CONFIG_JSON (a Secret) keeps the schedule out of the public repository.
+
+    A broken Secret must not crash the run: fall back to config.json, close every day
+    and say so in the log.
+    """
+    public = json.loads((ROOT/'config.json').read_text(encoding='utf-8'))
+    raw = os.environ.get('MYSLOT_CONFIG_JSON', '').strip()
+    if not raw:
+        return public, None
+    try:
+        cfg = json.loads(raw)
+    except ValueError:
+        return public, 'config_secret_not_valid_json'
+    if not isinstance(cfg, dict) or any(k not in cfg for k in REQUIRED_CONFIG):
+        return public, 'config_secret_missing_fields'
+    return cfg, None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', type=Path, default=ROOT/'dist')
     parser.add_argument('--fixture', action='store_true')
     args = parser.parse_args()
-    # MYSLOT_CONFIG_JSON (a Secret) keeps the schedule out of the public repository.
-    cfg = json.loads(os.environ.get('MYSLOT_CONFIG_JSON', '').strip() or (ROOT/'config.json').read_text(encoding='utf-8'))
+    cfg, config_problem = load_config()
     holiday_data = json.loads((ROOT/'holidays-cn.json').read_text(encoding='utf-8'))
     global RULES
     rules_broken = False
@@ -606,6 +627,8 @@ def main():
     else:
         try:
             private = private_rules()
+            if config_problem:
+                raise SyncError(config_problem)
             if rules_broken:
                 raise SyncError('calendar_rules_invalid')
             sources = cfg.get('calendarSources', ['icloud'])
@@ -627,7 +650,14 @@ def main():
             code = str(exc) if isinstance(exc, SyncError) else 'private_input_or_unexpected_error'
             print(f'Calendar sync failed ({code}); publishing closed days.')
             events, private, safe, codes = [], {}, True, []
-    result = build_data(cfg, holiday_data, private, events, now, safe=safe)
+    try:
+        result = build_data(cfg, holiday_data, private, events, now, safe=safe)
+    except Exception:
+        # A bad value in the settings (time window, lead time...) must not stop the page.
+        print('Calendar sync failed (config_values_invalid); publishing closed days.')
+        cfg = json.loads((ROOT/'config.json').read_text(encoding='utf-8'))
+        safe, private = True, {}
+        result = build_data(cfg, holiday_data, private, [], now, safe=True)
     result['demo'] = args.fixture
     if safe:
         result['syncFailed'] = True

@@ -190,6 +190,9 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(friend['days']['2026-09-30']['status'], 'event')
         self.assertNotIn('title', friend['days']['2026-09-30'])
         self.assertIsNone(open_box('old-code-1'))
+        forever = [{'code': 'forever-111111', 'see': ['ijoy'], 'until': '2026-09-01', 'forever': True}]
+        public, active, _ = seal_for_codes(result, forever, '2026-09-28')
+        self.assertEqual(active, 1)
     def test_levels_decide_what_each_person_sees(self):
         events = [item(d(30), d(30)+timedelta(days=1), 'convention', 'ijoy', True),
                   item(d(29), d(29)+timedelta(days=1), 'convention', '回老家', True)]
@@ -203,7 +206,10 @@ class CalendarTests(unittest.TestCase):
         home, con = seen({'level': 'friend', 'home': True})
         self.assertEqual(home['title'], '回老家')
         home, con = seen({'level': 'elder'})
-        self.assertEqual((home['title'], 'title' in con), ('回老家', False))
+        self.assertEqual((home, con), ({'status': 'mark', 'title': '回老家'}, {'status': 'busy'}))
+        elder_days = view_for({'level': 'elder'}, result)[0]
+        self.assertEqual(elder_days['2026-09-28'], {'status': 'busy'})             # workday
+        self.assertTrue(all(set(v) <= {'status', 'festival', 'title'} for v in elder_days.values()))
         home, con = seen({'level': 'con'})
         self.assertEqual((home['status'], con['title']), ('locked', 'ijoy'))
         home, con = seen({'level': 'close'})
@@ -224,6 +230,33 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(days['2026-10-20']['status'], 'open')   # next week is fresh
         two = build_data(cfg, HOLIDAYS, {}, booked[:2], NOW)['days']
         self.assertEqual(two['2026-10-15']['status'], 'open')
+
+    def test_share_code_typing_is_forgiven(self):
+        from build import normalize_code
+        for typed in ('星星-936265', '星星－936265', '星星—936265', ' 星星 - 936265 ', '星星-９３６２６５'):
+            self.assertEqual(normalize_code(typed), '星星-936265', typed)
+        self.assertEqual(normalize_code('Apai-1'), 'apai-1')
+
+    def test_custom_rules_from_config(self):
+        from build import classify, check_rules
+        rules = check_rules({'busy': ['加班'], 'booked': ['OK'], 'reserve': ['留给'],
+                             'semi': [{'word': '出差', 'seenBy': ['close'], 'others': 'busy'},
+                                      {'word': '展会', 'seenBy': ['con', 'close'], 'others': 'event'}]})
+        self.assertEqual(classify('加班到很晚', rules=rules)[0], 'lock')
+        self.assertEqual(classify('聚会', rules=rules)[0], 'private')        # not in this person's list
+        self.assertEqual(classify('OK-阿拍', rules=rules)[0], 'booked')
+        self.assertEqual(classify('留给-星星', True, rules)[:2], ('reserve', '星星'))
+        self.assertEqual(classify('展会-CP30', rules=rules), ('convention', 'CP30', '展会'))
+        self.assertEqual(classify('去上海出差', True, rules), ('convention', '出差', '出差'))
+        with self.assertRaises(ValueError):
+            check_rules({'semi': [{'word': '', 'others': 'maybe'}]})
+        events = [item(d(29), d(29)+timedelta(days=1), 'convention', '出差', True),
+                  item(d(30), d(30)+timedelta(days=1), 'convention', 'CP30', True)]
+        events[0]['group'], events[1]['group'] = '出差', '展会'
+        result = build_data(CFG, HOLIDAYS, {}, events, NOW)
+        friend = view_for({'level': 'friend', 'also': ['展会']}, result, rules)[0]
+        self.assertEqual(friend['2026-09-29']['status'], 'locked')
+        self.assertEqual(friend['2026-09-30']['title'], 'CP30')
 
     def test_private_secret_empty_is_valid(self):
         with patch.dict(os.environ, {'MYSLOT_PRIVATE_JSON': ''}):

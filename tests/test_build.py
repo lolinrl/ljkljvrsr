@@ -15,12 +15,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from build import view_for, seal_for_codes, build_data, event_kind, fetch_icloud, fetch_feishu, fetch_google, main, private_rules, SyncError
 
-# Tests use fixed windows so editing config.json in settings.html does not break them.
-CFG = json.loads((ROOT / 'config.json').read_text())
-CFG.update(schedule={'mode': 'weekly', 'workdaysIso': [1, 2, 3, 4, 5], 'holidaysOverride': True},
-           windows={'workday': [['18:30', '19:00']], 'restday': [['12:00', '16:00']],
-                    'convention': [['12:00', '16:00']]},
-           stepMinutes=30, leadHours={'workday': 4, 'restday': 24, 'convention': 24}, daysAhead=90)
+# Tests use their own fixed settings, so whatever you save from settings.html into
+# config.json (rules, levels, projects, time windows...) can never break them.
+CFG = {
+    'owner': 'Jan', 'timeZone': 'Asia/Shanghai', 'calendarMode': 'icloud', 'calendarSources': ['icloud'],
+    'schedule': {'mode': 'weekly', 'workdaysIso': [1, 2, 3, 4, 5], 'holidaysOverride': True},
+    'windows': {'workday': [['18:30', '19:00']], 'restday': [['12:00', '16:00']],
+                'convention': [['12:00', '16:00']]},
+    'stepMinutes': 30, 'leadHours': {'workday': 4, 'restday': 24, 'convention': 24},
+    'cosLeadDays': 30, 'daysAhead': 90, 'bufferMinutes': 60, 'weeklyMax': 3,
+}
 HOLIDAYS = json.loads((ROOT / 'holidays-cn.json').read_text())
 TZ = ZoneInfo('Asia/Shanghai')
 NOW = datetime(2026, 9, 28, 8, tzinfo=TZ)
@@ -48,6 +52,27 @@ def open_sealed(public, code):
             pass
 
 class CalendarTests(unittest.TestCase):
+    def setUp(self):
+        # main() loads rules / levels / projects from a config; start every test from the defaults.
+        import build
+        build.RULES, build.LEVEL_SETTINGS, build.PROJECTS = build.DEFAULT_RULES, build.DEFAULT_LEVELS, build.DEFAULT_PROJECTS
+        self._root = patch('build.ROOT', self._project_copy())
+        self._root.start()
+
+    def tearDown(self):
+        self._root.stop()
+        self._tmp.cleanup()
+
+    def _project_copy(self):
+        """A temporary project folder whose config.json is the fixed test CFG."""
+        self._tmp = tempfile.TemporaryDirectory()
+        folder = Path(self._tmp.name)
+        (folder/'site').mkdir()
+        (folder/'site'/'index.html').write_text('<!doctype html>')
+        (folder/'config.json').write_text(json.dumps(CFG))
+        (folder/'holidays-cn.json').write_text(json.dumps(HOLIDAYS))
+        return folder
+
     def test_three_kinds_of_days_from_titles(self):
         # Busy all day
         for title in ('【休息】', '朋友聚会', '【cos】', 'COS 返图', '约好的拍照', '【拍照】外景'):
@@ -166,8 +191,11 @@ class CalendarTests(unittest.TestCase):
                  {'code': 'short'}]                                                # too short
         public, active, skipped = seal_for_codes(result, codes, '2026-09-28', now=NOW)
         self.assertEqual((active, skipped), (2, 2))
+        # Only ciphertext is published. (Checking for words inside random base64 would be flaky.)
+        self.assertEqual(set(public), {'schema', 'iterations', 'sealed'})
+        self.assertTrue(all(set(box) == {'s', 'n', 'd'} for box in public['sealed']))
         text = json.dumps(public, ensure_ascii=False)
-        for secret in ('ijoy', '江江', '星星', 'workday', 'windows', '2026-09'):
+        for secret in ('江江', '星星', '2026-09'):              # cannot appear in base64 at all
             self.assertNotIn(secret, text)
 
         def open_box(code):

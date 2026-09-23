@@ -346,6 +346,11 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(config_problems(cfg), [])
         self.assertEqual(build_data(cfg, HOLIDAYS, {}, [], NOW)['days']['2026-09-29']['windows'], [['18:30', '24:00']])
 
+    def test_odd_energy_settings_fall_back_instead_of_failing(self):
+        for value in (None, '', 'abc', -1, 0, '3'):
+            with self.subTest(value=value):
+                build_data(dict(CFG, weeklyMax=value, bufferMinutes=value), HOLIDAYS, {}, [], NOW)
+
     def test_private_secret_empty_is_valid(self):
         with patch.dict(os.environ, {'MYSLOT_PRIVATE_JSON': ''}):
             self.assertEqual(private_rules(), {})

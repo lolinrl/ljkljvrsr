@@ -339,6 +339,13 @@ class CalendarTests(unittest.TestCase):
         events = [item(datetime(2026, 10, 13, tzinfo=TZ), datetime(2026, 10, 14, tzinfo=TZ), 'as_rest', all_day=True)]
         self.assertEqual(build_data(CFG, HOLIDAYS, {}, events, NOW)['days']['2026-10-13']['dayType'], 'restday')
 
+    def test_window_ending_at_midnight(self):
+        from build import parse_range, config_problems
+        self.assertEqual(parse_range('20:00-00:00'), (1200, 1440))
+        cfg = dict(CFG, windows=dict(CFG['windows'], workday=[['18:30', '00:00']]))
+        self.assertEqual(config_problems(cfg), [])
+        self.assertEqual(build_data(cfg, HOLIDAYS, {}, [], NOW)['days']['2026-09-29']['windows'], [['18:30', '24:00']])
+
     def test_private_secret_empty_is_valid(self):
         with patch.dict(os.environ, {'MYSLOT_PRIVATE_JSON': ''}):
             self.assertEqual(private_rules(), {})

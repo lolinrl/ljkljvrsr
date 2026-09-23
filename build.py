@@ -6,21 +6,80 @@ import json
 import os
 import re
 import shutil
+import unicodedata
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent
-# 漫展-xx / 【漫展-xx】 / 漫展：xx -> only "xx" is published.
-CONVENTION = re.compile(r'漫展\s*[-－—–_:：]\s*([^\s【】\[\]，,。；;（）()]+)')
-# Busy all day: the title contains any of these (brackets optional).
-LOCK_WORDS = re.compile(r'聚会|拍照|(?<![a-z])cos(?![a-z])|【休息】', re.I)
-# Half-available: out somewhere, but a meal with friends is fine. Title -> public label.
-SEMI_WORDS = (('漫展', '漫展'), ('回老家', '回老家'))
-# 预留-xx: kept for one person. Everyone else sees the day as unavailable.
-# 已约-xx: a confirmed meet-up. Closes the rest of that day and counts toward the weekly limit.
-BOOKED = re.compile(r'^\s*【?已约')
-RESERVE = re.compile(r'预留\s*[-－—–_:：]\s*([^\s【】\[\]，,。；;（）()]+)')
+# Calendar markers. Everyone can rename these in config.json "rules" (settings.html).
+DEFAULT_RULES = {
+    # 全私密日: busy all day. Title contains any word (brackets optional).
+    'busy': ['聚会', '拍照', 'cos', '【休息】'],
+    # 已约: a confirmed meet-up. Closes the rest of that day and counts toward the weekly limit.
+    'booked': ['已约'],
+    # 私密开放日: "预留-xx" is open only to the person whose code has reserve "xx".
+    'reserve': ['预留'],
+    # 半开放日: "漫展-xx" publishes only "xx"; a bare word publishes the word.
+    # seenBy: levels that see the name. others: what everyone else sees
+    # ("event" = 有安排、可以约吃饭, "busy" = 不可用).
+    'semi': [
+        {'word': '漫展', 'seenBy': ['con', 'close'], 'others': 'event'},
+        {'word': '回老家', 'seenBy': ['elder', 'close'], 'others': 'busy'},
+    ],
+}
+NAME_AFTER = r'\s*[-－—–_:：]\s*([^\s【】\[\]，,。；;（）()]+)'
+RULES = DEFAULT_RULES
+
+
+def word_pattern(word):
+    """Latin words match whole words only (cos is not Costco); others match anywhere."""
+    escaped = re.escape(word)
+    if re.fullmatch(r'[A-Za-z0-9]+', word):
+        return r'(?<![A-Za-z])' + escaped + r'(?![A-Za-z])'
+    return escaped
+
+
+def check_rules(rules):
+    rules = dict(DEFAULT_RULES, **(rules or {}))
+    for key in ('busy', 'booked', 'reserve'):
+        if not isinstance(rules[key], list) or not all(isinstance(w, str) and w.strip() for w in rules[key]):
+            raise ValueError('invalid rules')
+    for rule in rules['semi']:
+        if not (isinstance(rule, dict) and isinstance(rule.get('word'), str) and rule['word'].strip()
+                and isinstance(rule.get('seenBy', []), list) and rule.get('others', 'event') in ('event', 'busy')):
+            raise ValueError('invalid rules')
+    return rules
+
+
+def clean_label(text):
+    return re.sub(r'[\x00-\x1f\x7f<>]', ' ', text).strip()[:36]
+
+
+def classify(summary, all_day=False, rules=None):
+    """Return (kind, public label, semi word). kind: booked | reserve | lock | convention | private."""
+    rules = rules or RULES
+    summary = summary.strip()
+    if any(re.search(r'^\s*【?' + word_pattern(w), summary, re.I) for w in rules['booked']):
+        return 'booked', '', ''
+    for w in rules['reserve']:
+        found = re.search(word_pattern(w) + NAME_AFTER, summary, re.I)
+        if found:
+            return 'reserve', clean_label(found.group(1)), ''
+    if any(re.search(word_pattern(w), summary, re.I) for w in rules['busy']) or (all_day and '休息' in summary):
+        return 'lock', '', ''
+    for rule in rules['semi']:
+        found = re.search(word_pattern(rule['word']) + NAME_AFTER, summary, re.I)
+        if found and clean_label(found.group(1)):
+            return 'convention', clean_label(found.group(1)), rule['word']
+    for rule in rules['semi']:
+        if re.search(word_pattern(rule['word']), summary, re.I):
+            return 'convention', rule['word'], rule['word']
+    return 'private', '', ''
+
+
+def event_kind(summary, all_day=False):
+    return classify(summary, all_day)[:2]
 
 
 class SyncError(Exception):
@@ -32,30 +91,6 @@ def minutes(value):
     if not 0 <= h < 24 or not 0 <= m < 60:
         raise ValueError('invalid time')
     return h * 60 + m
-
-
-def event_kind(summary, all_day=False):
-    """Return ('lock'|'convention'|'private', public label).
-
-    'convention' means half-available (漫展, 回老家): the day stays open for a meal.
-    """
-    summary = summary.strip()
-    if BOOKED.search(summary):
-        return 'booked', ''
-    reserved = RESERVE.search(summary)
-    if reserved:
-        return 'reserve', reserved.group(1)[:36]
-    if LOCK_WORDS.search(summary) or (all_day and '休息' in summary):
-        return 'lock', ''
-    match = CONVENTION.search(summary)
-    if match:
-        title = re.sub(r'[\x00-\x1f\x7f<>]', ' ', match.group(1)).strip()[:36]
-        if title:
-            return 'convention', title
-    for word, label in SEMI_WORDS:
-        if word in summary:
-            return 'convention', label
-    return 'private', ''
 
 
 def local_time(value, tz):
@@ -103,11 +138,11 @@ def fetch_caldav(first, last, tz, *, source, url, user, password, names):
                         finish = begin + timedelta(hours=1)
                     if finish <= first or begin >= last:
                         continue
-                    kind, title = event_kind(str(component.get('SUMMARY', '')), all_day)
+                    kind, title, group = classify(str(component.get('SUMMARY', '')), all_day)
                     if kind == 'private' and str(component.get('TRANSP', '')).upper() == 'TRANSPARENT':
                         continue
                     records.append({'start': begin, 'end': finish, 'kind': kind,
-                                    'title': title, 'allDay': all_day})
+                                    'title': title, 'allDay': all_day, 'group': group})
         except Exception as exc:
             raise SyncError(source + '_event_read_failed') from exc
     if found != selected:
@@ -189,11 +224,11 @@ def _read_google(api, selected, first, last, tz):
                 all_day = 'date' in start_raw
                 begin = local_time(date.fromisoformat(start_raw['date']), tz) if all_day else datetime.fromisoformat(start_raw['dateTime'].replace('Z', '+00:00')).astimezone(tz)
                 finish = local_time(date.fromisoformat(end_raw['date']), tz) if all_day else datetime.fromisoformat(end_raw['dateTime'].replace('Z', '+00:00')).astimezone(tz)
-                kind, title = event_kind(event.get('summary', ''), all_day)
+                kind, title, group = classify(event.get('summary', ''), all_day)
                 if event.get('transparency') == 'transparent' and kind == 'private':
                     continue
                 records.append({'start': begin, 'end': finish, 'kind': kind,
-                                'title': title, 'allDay': all_day})
+                                'title': title, 'allDay': all_day, 'group': group})
             page = response.get('nextPageToken')
             if not page:
                 break
@@ -401,7 +436,8 @@ def build_data(cfg, holiday_data, private, events, now, safe=False):
             entry['for'] = sorted({v['title'] for v in reserves})
         elif convention:
             entry['title'] = ' / '.join(dict.fromkeys(v['title'] for v in conventions))[:40]
-            entry['group'] = 'home' if any(v['title'] == '回老家' for v in conventions) else 'con'
+            first_mark = conventions[0]
+            entry['group'] = first_mark.get('group') or ('回老家' if first_mark['title'] == '回老家' else '漫展')
         monday = day - timedelta(days=day.weekday())
         if booked_weeks.get(monday, 0) >= weekly_max:
             entry = {k: v for k, v in entry.items() if k in ('dayType', 'festival')}
@@ -413,6 +449,16 @@ def build_data(cfg, holiday_data, private, events, now, safe=False):
 
 
 SHARE_ITERATIONS = 150000
+
+
+def normalize_code(code):
+    """Forgive typing differences: full-width letters, other dashes, spaces, upper case.
+
+    site/index.html applies exactly the same steps before decrypting.
+    """
+    code = unicodedata.normalize('NFKC', code)
+    code = re.sub('[\u2010-\u2015\u2212\uff0d\u30fc]', '-', code)
+    return re.sub(r'\s+', '', code).lower()
 
 
 def share_codes():
@@ -431,6 +477,8 @@ def share_codes():
         see = entry.get('see', [])
         if not (isinstance(see, list) and all(isinstance(v, str) for v in see)):
             raise ValueError('invalid share codes')
+        if not (isinstance(entry.get('also', []), list) and all(isinstance(v, str) for v in entry.get('also', []))):
+            raise ValueError('invalid share codes')
         if entry.get('reserve') is not None and not isinstance(entry['reserve'], str):
             raise ValueError('invalid share codes')
         if entry.get('until') is not None:
@@ -441,18 +489,21 @@ def share_codes():
 LEVELS = {'elder', 'friend', 'con', 'close'}
 
 
-def view_for(entry, result):
+def view_for(entry, result, rules=None):
     """What one share code may see. The page never says that others see more or less.
 
-    level: elder (长辈) sees 回老家, not 漫展 names; friend (朋友) sees neither;
-    con (漫展圈) sees 漫展 names; close (密友) sees everything.
-    home: true lets a friend see 回老家 too. see: extra 漫展 names for this person.
+    level: friend (朋友) / elder (长辈) / con (圈内) / close (密友). Each 半开放 rule in
+    config "rules" says which levels see its name and what everyone else sees.
+    also: extra 半开放 words for this person (home: true is short for also 回老家).
+    see: extra single names (the xx) for this person; the code then ends after the last one.
     reserve: the xx in 预留-xx. Anyone can be given one.
+    elder: only free / busy (and names of 半开放 days they may see).
     """
+    rules = rules or RULES
     level = entry.get('level', 'friend')
     see, mine = entry.get('see', []), entry.get('reserve')
-    sees_home = level in ('elder', 'close') or entry.get('home') is True
-    sees_con = level in ('con', 'close')
+    also = set(entry.get('also', [])) | ({'回老家'} if entry.get('home') is True else set())
+    semi = {r['word']: r for r in rules['semi']}
     days, marked = {}, []
     for key, value in result['days'].items():
         day = dict(value)
@@ -464,20 +515,29 @@ def view_for(entry, result):
             else:
                 day = dict(closed, status='locked')
         elif day['status'] == 'event':
-            group = day.pop('group', 'con')
-            if group == 'home':
-                if not sees_home:
-                    day = dict(closed, status='locked')  # away from town: no local meet-ups
-            elif sees_con or any(n in day['title'].split(' / ') for n in see):
-                if not sees_con:
-                    marked.append(key)
+            group = day.pop('group', '漫展')
+            rule = semi.get(group, {'seenBy': ['close'], 'others': 'event'})
+            by_level = level in rule.get('seenBy', []) or group in also
+            by_name = any(n in day['title'].split(' / ') for n in see)
+            if by_name and not by_level:
+                marked.append(key)
+            if not (by_level or by_name):
+                if rule.get('others', 'event') == 'busy':
+                    day = dict(closed, status='locked')   # e.g. away from town
+                else:
+                    del day['title']
+        if level == 'elder':
+            if day['status'] == 'event' and 'title' in day:
+                day = dict(closed, status='mark', title=day['title'])
             else:
-                del day['title']
+                free = day['status'] == 'open' and day.get('dayType') == 'restday'
+                day = dict(closed, status='free' if free else 'busy')
+            day.pop('dayType', None)
         days[key] = day
     return days, (max(marked) if marked and see else None)
 
 
-def seal_for_codes(result, codes, today):
+def seal_for_codes(result, codes, today, rules=None):
     """Replace the whole public output with one encrypted copy per share code.
 
     The published file holds only ciphertext; codes live in a GitHub Secret.
@@ -488,9 +548,10 @@ def seal_for_codes(result, codes, today):
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
     sealed, skipped = [], 0
     for entry in codes:
-        code = entry['code'].strip()
-        days, last_marked = view_for(entry, result)
-        until = entry.get('until') or last_marked
+        code = normalize_code(entry['code'])
+        days, last_marked = view_for(entry, result, rules)
+        # forever: never expires, even if the entry also lists extra 漫展 names.
+        until = None if entry.get('forever') is True else entry.get('until') or last_marked
         if len(code) < 6 or (until and until < today):
             skipped += 1
             continue
@@ -498,6 +559,10 @@ def seal_for_codes(result, codes, today):
             days = {k: v for k, v in days.items() if k <= until}
         payload = {k: v for k, v in result.items() if k not in ('days', 'owner')}
         payload.update(owner=entry.get('name') or result['owner'], until=until, days=days)
+        if entry.get('level') == 'elder':
+            payload['simple'] = True
+            for field in ('stepMinutes', 'leadHours', 'cosLeadDays'):
+                payload.pop(field, None)
         salt, nonce = os.urandom(16), os.urandom(12)
         key = PBKDF2HMAC(SHA256(), 32, salt, SHARE_ITERATIONS).derive(code.encode('utf-8'))
         data = AESGCM(key).encrypt(nonce, json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'), None)
@@ -515,6 +580,12 @@ def main():
     # MYSLOT_CONFIG_JSON (a Secret) keeps the schedule out of the public repository.
     cfg = json.loads(os.environ.get('MYSLOT_CONFIG_JSON', '').strip() or (ROOT/'config.json').read_text(encoding='utf-8'))
     holiday_data = json.loads((ROOT/'holidays-cn.json').read_text(encoding='utf-8'))
+    global RULES
+    rules_broken = False
+    try:
+        RULES = check_rules(cfg.get('rules'))
+    except (ValueError, TypeError):
+        rules_broken = True  # never guess: a broken rule list closes every day
     now = datetime.now(timezone.utc)
     tz = ZoneInfo(cfg['timeZone'])
     first = datetime.combine(now.astimezone(tz).date(), time.min, tzinfo=tz)
@@ -535,6 +606,8 @@ def main():
     else:
         try:
             private = private_rules()
+            if rules_broken:
+                raise SyncError('calendar_rules_invalid')
             sources = cfg.get('calendarSources', ['icloud'])
             if not isinstance(sources, list) or not sources or any(s not in ('icloud', 'google', 'feishu') for s in sources):
                 raise SyncError('calendar_source_not_configured')

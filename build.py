@@ -93,6 +93,11 @@ class SyncError(Exception):
     """A fixed code with no private details."""
 
 
+def end_minutes(value):
+    """An end time of 00:00 or 24:00 means midnight at the end of the day."""
+    return 1440 if value.strip() in ('00:00', '0:00', '24:00') else minutes(value)
+
+
 def minutes(value):
     h, m = map(int, value.split(':'))
     if not 0 <= h < 24 or not 0 <= m < 60:
@@ -309,7 +314,7 @@ def windows_for(day, cfg, kind, convention):
     name = 'convention' if convention else kind
     result = []
     for start_text, end_text in cfg['windows'][name]:
-        a, b = minutes(start_text), minutes(end_text)
+        a, b = minutes(start_text), end_minutes(end_text)
         if a >= b:
             raise ValueError('invalid window')
         start, end = origin + timedelta(minutes=a), origin + timedelta(minutes=b)
@@ -463,7 +468,7 @@ def build_data(cfg, holiday_data, private, events, now, safe=False):
             output[key] = entry
             continue
         entry['status'] = 'reserved' if reserves else 'event' if convention else 'open'
-        entry['windows'] = [[a.strftime('%H:%M'), b.strftime('%H:%M')] for a, b in windows]
+        entry['windows'] = [[a.strftime('%H:%M'), '24:00' if b.date() > day else b.strftime('%H:%M')] for a, b in windows]
         if reserves:
             entry['for'] = sorted({v['title'] for v in reserves})
         elif convention:
@@ -636,7 +641,7 @@ def parse_range(text):
     if not found:
         raise ValueError('invalid time range')
     a = minutes(found.group(1))
-    b = 1440 if found.group(2) == '24:00' else minutes(found.group(2))
+    b = end_minutes(found.group(2))
     if a >= b:
         raise ValueError('invalid time range')
     return a, b
@@ -790,6 +795,48 @@ def seal_for_codes(result, codes, today, rules=None, now=None):
 REQUIRED_CONFIG = ('owner', 'timeZone', 'schedule', 'windows', 'stepMinutes', 'leadHours', 'cosLeadDays', 'daysAhead')
 
 
+def config_problems(cfg):
+    """Names of settings that look wrong. Field names only, never values: the log is public."""
+    problems = []
+    def number(value, low, high):
+        return not isinstance(value, bool) and isinstance(value, (int, float)) and low <= value <= high
+    schedule = cfg.get('schedule') if isinstance(cfg.get('schedule'), dict) else {}
+    if schedule.get('mode') not in ('weekly', 'cycle'):
+        problems.append('schedule.mode')
+    if schedule.get('mode') == 'weekly' and not (isinstance(schedule.get('workdaysIso'), list)
+                                                 and all(number(v, 1, 7) for v in schedule['workdaysIso'])):
+        problems.append('schedule.workdays')
+    if schedule.get('mode') == 'cycle':
+        try:
+            date.fromisoformat(schedule.get('anchor', ''))
+        except (TypeError, ValueError):
+            problems.append('schedule.anchor')
+        for field in ('workDays', 'restDays'):
+            if not (isinstance(schedule.get(field), int) and schedule[field] >= 1):
+                problems.append('schedule.' + field)
+    windows = cfg.get('windows') if isinstance(cfg.get('windows'), dict) else {}
+    for name in ('workday', 'restday', 'convention'):
+        try:
+            for start, end in windows[name]:
+                if minutes(start) >= end_minutes(end):
+                    raise ValueError
+        except (KeyError, TypeError, ValueError, AttributeError):
+            problems.append('windows.' + name)
+    step = cfg.get('stepMinutes')
+    if not (isinstance(step, int) and 1 <= step <= 60 and 60 % step == 0):
+        problems.append('stepMinutes')
+    lead = cfg.get('leadHours') if isinstance(cfg.get('leadHours'), dict) else None
+    if lead is None or any(not number(lead.get(k), 0, 2160) for k in ('workday', 'restday', 'convention')):
+        problems.append('leadHours')
+    if not number(cfg.get('daysAhead'), 1, 366) or not isinstance(cfg.get('daysAhead'), int):
+        problems.append('daysAhead')
+    if not number(cfg.get('bufferMinutes', 60), 0, 720):
+        problems.append('bufferMinutes')
+    if not number(cfg.get('weeklyMax', 3), 1, 100):
+        problems.append('weeklyMax')
+    return problems
+
+
 def load_config():
     """MYSLOT_CONFIG_JSON (a Secret) keeps the schedule out of the public repository.
 
@@ -870,9 +917,16 @@ def main():
             events, private, safe, codes = [], {}, True, []
     try:
         result = build_data(cfg, holiday_data, private, events, now, safe=safe)
-    except Exception:
+    except Exception as exc:
         # A bad value in the settings (time window, lead time...) must not stop the page.
-        print('Calendar sync failed (config_values_invalid); publishing closed days.')
+        names = {'windows.workday': '上班日时段', 'windows.restday': '休息日时段',
+                 'windows.convention': '全天半开放日的见面时段', 'schedule.mode': '排班方式',
+                 'schedule.workdays': '上班的星期', 'schedule.anchor': '轮班起点',
+                 'schedule.workDays': '轮班上几天', 'schedule.restDays': '轮班休几天',
+                 'stepMinutes': '时间间隔', 'leadHours': '提前时间', 'daysAhead': '显示天数',
+                 'bufferMinutes': '活动前后留出', 'weeklyMax': '每周最多约几次'}
+        where = '、'.join(names.get(k, k) for k in config_problems(cfg)) or type(exc).__name__
+        print(f'Calendar sync failed (config_values_invalid: {where}); publishing closed days.')
         cfg = json.loads((ROOT/'config.json').read_text(encoding='utf-8'))
         safe, private = True, {}
         result = build_data(cfg, holiday_data, private, [], now, safe=True)

@@ -42,7 +42,8 @@
 const LEVEL={friend:'朋友',elder:'长辈',con:'圈内好友',close:'密友'};
 const norm=c=>c.normalize('NFKC').replace(/[‐-―−－ー]/g,'-').replace(/\s+/g,'').toLowerCase();
 const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
-let list=[],dirty=false;
+let list=[],dirty=false,editing=null;
+function startEdit(i){const e=list[i];editing=i;$('c-who').value=e.code;$('c-who').disabled=true;$('c-level').value=e.level||'friend';$('c-also').value=[...(e.also||[]),...(e.home?['回老家']:[])].join(',');$('c-tags').value=(e.tags||[]).join(',');$('c-reserve').value=e.reserve||'';$('c-name').value=e.name||'';$('c-forever').checked=!!e.forever;$('c-until').value=e.until||'';$('c-until').disabled=!!e.forever;$('c-note').value=e.note||'';$('c-make').textContent='保存修改（分享码不变）';$('c-out').hidden=false;$('c-out').textContent=`正在修改「${e.code}」。改完点「保存修改」，再保存清单文件、复制给 Secret。对方用原来的码，下次同步后就会看到新的内容。`;$('c-who').scrollIntoView({behavior:'smooth',block:'center'})}
 const status=t=>$('l-status').textContent=t;
 const expired=e=>!e.forever&&e.until&&e.until<today();
 function setDirty(v){dirty=v;if(v)status(`清单有改动（${list.length} 个码），记得「保存清单文件」，再「复制给 Secret」。`)}
@@ -51,7 +52,7 @@ function render(){const body=$('l-table').querySelector('tbody');body.replaceChi
   const extra=[...(e.tags||[]).map(v=>'#'+v),...(e.ordinary?['平常日子']:[]),...(e.also||[]),...(e.home?['回老家']:[]),...(e.reserve?['预留:'+e.reserve]:[]),...(e.see||[]).map(v=>'看:'+v)].join('、');
   const cells=[e.code,(window.myslotLevels?.read()[e.level||'friend']?.name)||LEVEL[e.level||'friend']||e.level,extra,e.name||'',e.forever?'永久':e.until?(expired(e)?e.until+'（已过期）':'到 '+e.until):'不限',e.given||'',e.note||''];
   for(const c of cells){const td=document.createElement('td');td.textContent=c;tr.append(td)}
-  const td=document.createElement('td');const del=document.createElement('button');del.type='button';del.textContent='收回';del.onclick=()=>{if(confirm(`收回「${e.code}」？保存并更新 Secret 后，这个码就打不开了。`)){list.splice(i,1);setDirty(true);render()}};td.append(del);tr.append(td);body.append(tr)}}
+  const td=document.createElement('td');const edit=document.createElement('button');edit.type='button';edit.textContent='修改';edit.onclick=()=>startEdit(i);td.append(edit,' ');const del=document.createElement('button');del.type='button';del.textContent='收回';del.onclick=()=>{if(confirm(`收回「${e.code}」？保存并更新 Secret 后，这个码就打不开了。`)){list.splice(i,1);setDirty(true);render()}};td.append(del);tr.append(td);body.append(tr)}}
 function load(data,source){if(!Array.isArray(data))throw Error('最外层需要是方括号 [ ]');for(const e of data)if(!e||typeof e.code!=='string')throw Error('有一项缺少 code');list=data;dirty=false;render();status(`已载入${source}：${list.length} 个码${list.some(expired)?'，其中有已过期的，可以「清理已过期」':''}。`)}
 $('l-open').onchange=async ev=>{const f=ev.target.files[0];if(!f)return;try{load(JSON.parse(await f.text()),'「'+f.name+'」')}catch(err){status('打不开这个文件：'+err.message)}ev.target.value=''};
 $('k-load').onclick=()=>{try{load(JSON.parse($('k-list').value),'粘贴的内容')}catch(err){status('格式有误：'+err.message+'。常见原因：中文引号或逗号、最后一项后面多了逗号。')}};
@@ -60,13 +61,13 @@ $('l-copy').onclick=async()=>{const secret=JSON.stringify(list.filter(e=>!expire
 $('l-clean').onclick=()=>{const before=list.length;list=list.filter(e=>!expired(e));const n=before-list.length;render();if(n)setDirty(true);else status('没有过期的码。')};
 $('c-forever').onchange=()=>{$('c-until').disabled=$('c-forever').checked;if($('c-forever').checked)$('c-until').value=''};
 $('c-make').onclick=()=>{const who=$('c-who').value.trim();if(!who){$('c-out').hidden=false;$('c-out').textContent='先填对方代号。';return}
- let code;do{const n=new Uint32Array(1);crypto.getRandomValues(n);code=`${who}-${String(n[0]%1e6).padStart(6,'0')}`}while(list.some(e=>norm(e.code)===norm(code)));
+ let code;if(editing!==null)code=list[editing].code;else do{const n=new Uint32Array(1);crypto.getRandomValues(n);code=`${who}-${String(n[0]%1e6).padStart(6,'0')}`}while(list.some(e=>norm(e.code)===norm(code)));
  const entry={code,level:$('c-level').value};const also=$('c-also').value.split(/[,，、]/).map(v=>v.trim()).filter(Boolean);if(also.length)entry.also=also;const tags=$('c-tags').value.split(/[,，、]/).map(v=>v.trim()).filter(Boolean);if(tags.length)entry.tags=tags;
  if($('c-reserve').value.trim())entry.reserve=$('c-reserve').value.trim();if($('c-ord').checked)entry.ordinary=true;if($('c-name').value.trim())entry.name=$('c-name').value.trim();
  if($('c-forever').checked)entry.forever=true;else if($('c-until').value)entry.until=$('c-until').value;
- entry.given=today();if($('c-note').value.trim())entry.note=$('c-note').value.trim();
- list.push(entry);render();setDirty(true);for(const id of ['c-who','c-also','c-tags','c-reserve','c-name','c-note','c-until'])$(id).value='';$('c-forever').checked=false;$('c-ord').checked=false;$('c-until').disabled=false;
- $('c-out').hidden=false;$('c-out').textContent=`发给 ${who} 的分享码：${code}\n（整串都要发，包括前面的代号）`};
+ entry.given=editing!==null?(list[editing].given||today()):today();if($('c-note').value.trim())entry.note=$('c-note').value.trim();
+ const wasEditing=editing!==null;if(wasEditing){list[editing]=entry;editing=null;$('c-who').disabled=false;$('c-make').textContent='生成并加入清单'}else list.push(entry);render();setDirty(true);for(const id of ['c-who','c-also','c-tags','c-reserve','c-name','c-note','c-until'])$(id).value='';$('c-forever').checked=false;$('c-ord').checked=false;$('c-until').disabled=false;
+ $('c-out').hidden=false;$('c-out').textContent=wasEditing?`已修改「${code}」。分享码没变，不用重新发给对方。`:`发给 ${who} 的分享码：${code}\n（整串都要发，包括前面的代号）`};
 $('k-run').onclick=()=>{const out=$('k-out');out.hidden=false;const hit=list.find(e=>norm(e.code)===norm($('k-code').value));out.textContent=!list.length?'先打开或粘贴清单。':hit?(expired(hit)?`找到了，但已在 ${hit.until} 过期。`:`✓ 找到了（${LEVEL[hit.level||'friend']}）。如果网页还是打不开，重新「复制给 Secret」并运行 Actions，等 10 分钟。`):'✗ 清单里没有这个码。'};
 addEventListener('beforeunload',ev=>{if(dirty){ev.preventDefault();ev.returnValue=''}});
 render();})();

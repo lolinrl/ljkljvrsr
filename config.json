@@ -41,7 +41,7 @@
   },
   "stepMinutes": 30,
   "leadHours": {
-    "workday": 4,
+    "workday": 2,
     "restday": 24,
     "convention": 2
   },

@@ -164,7 +164,7 @@ class CalendarTests(unittest.TestCase):
                  {'code': 'coworker-1180'},                                       # plain friend
                  {'code': 'old-code-1', 'level': 'close', 'until': '2026-09-01'},     # expired
                  {'code': 'short'}]                                                # too short
-        public, active, skipped = seal_for_codes(result, codes, '2026-09-28')
+        public, active, skipped = seal_for_codes(result, codes, '2026-09-28', now=NOW)
         self.assertEqual((active, skipped), (2, 2))
         text = json.dumps(public, ensure_ascii=False)
         for secret in ('ijoy', '江江', '星星', 'workday', 'windows', '2026-09'):
@@ -181,14 +181,18 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(star['owner'], '江江')
         self.assertEqual(star['until'], '2026-09-30')          # ends after her last marked day
         self.assertEqual(star['days']['2026-09-30']['title'], 'ijoy')
-        self.assertEqual(star['days']['2026-09-29']['status'], 'open')
+        self.assertEqual(star['days']['2026-09-30']['base'], 'semi')
+        self.assertEqual(star['days']['2026-09-29']['base'], 'ok')
         self.assertTrue(star['days']['2026-09-29']['forYou'])
+        self.assertNotIn('p', star['days']['2026-09-29'])      # a friend has no workday project: 可以商量
         friend = open_box('coworker-1180')
         self.assertIsNone(friend['until'])
         self.assertEqual(friend['owner'], CFG['owner'])
-        self.assertEqual(friend['days']['2026-09-29'], {'status': 'locked', 'dayType': 'workday'})
-        self.assertEqual(friend['days']['2026-09-30']['status'], 'event')
-        self.assertNotIn('title', friend['days']['2026-09-30'])
+        self.assertEqual(friend['days']['2026-09-29'], {'base': 'locked', 'dayType': 'workday'})
+        self.assertEqual(friend['days']['2026-09-30'], {'base': 'plans', 'dayType': 'workday'})
+        self.assertEqual([p['name'] for p in friend['projects']], ['吃饭', '逛街'])
+        for secret in ('busyTimes', '_semi', '_reserve', '_full'):
+            self.assertNotIn(secret, json.dumps(star) + json.dumps(friend))
         self.assertIsNone(open_box('old-code-1'))
         forever = [{'code': 'forever-111111', 'see': ['ijoy'], 'until': '2026-09-01', 'forever': True}]
         public, active, _ = seal_for_codes(result, forever, '2026-09-28')
@@ -208,7 +212,13 @@ class CalendarTests(unittest.TestCase):
         home, con = seen({'level': 'elder'})
         self.assertEqual((home, con), ({'status': 'mark', 'title': '回老家'}, {'status': 'busy'}))
         elder_days = view_for({'level': 'elder'}, result)[0]
-        self.assertEqual(elder_days['2026-09-28'], {'status': 'busy'})             # workday
+        self.assertEqual(elder_days['2026-09-28'], {'status': 'work'})             # workday
+        self.assertTrue(all('busy' not in v for v in view_for({'level': 'close'}, result)[0].values()))
+        # A rest day that is closed only because it is too soon is still 空闲 for parents.
+        soon = view_for({'level': 'elder'}, build_data(CFG, HOLIDAYS, {}, [], d(27, 9)))[0]
+        self.assertEqual(soon['2026-09-27'], {'status': 'free'})
+        cos = build_data(CFG, HOLIDAYS, {}, [item(d(27), d(28), 'lock', all_day=True)], d(25, 9))
+        self.assertEqual(view_for({'level': 'elder'}, cos)[0]['2026-09-27'], {'status': 'busy'})
         self.assertTrue(all(set(v) <= {'status', 'festival', 'title'} for v in elder_days.values()))
         home, con = seen({'level': 'con'})
         self.assertEqual((home['status'], con['title']), ('locked', 'ijoy'))
@@ -257,6 +267,49 @@ class CalendarTests(unittest.TestCase):
         friend = view_for({'level': 'friend', 'also': ['展会']}, result, rules)[0]
         self.assertEqual(friend['2026-09-29']['status'], 'locked')
         self.assertEqual(friend['2026-09-30']['title'], 'CP30')
+
+    def test_projects_light_up_different_days_per_person(self):
+        from build import project_days, check_levels
+        # Sat 10-03 is a holiday rest day; Mon 10-12 a workday with dinner 19:00-20:00 booked privately.
+        events = [item(datetime(2026, 10, 12, 19, tzinfo=TZ), datetime(2026, 10, 12, 20, tzinfo=TZ)),
+                  item(d(30), d(30)+timedelta(days=1), 'convention', 'ijoy', True)]
+        result = build_data(CFG, HOLIDAYS, {}, events, NOW)
+        def days(entry):
+            return project_days(entry, result, NOW)
+        friend, names = days({'level': 'friend'})
+        self.assertEqual(names, ['吃饭', '逛街'])
+        self.assertEqual(friend['2026-10-03']['p']['吃饭'], [['14:00', '18:00', 24]])
+        self.assertEqual(friend['2026-10-12'], {'dayType': 'workday', 'base': 'ok'})   # 可以商量
+        self.assertEqual(friend['2026-09-30']['base'], 'plans')
+        near, _ = days({'level': 'friend', 'tags': ['住得近']})
+        self.assertEqual(near['2026-10-13']['p']['吃饭'], [['18:30', '20:00', 2]])
+        self.assertEqual(near['2026-10-12']['p']['吃饭'], [['18:30', '19:00', 2]])   # dinner 19:00-20:00 is taken
+        circle, names = days({'level': 'con'})
+        self.assertEqual(names, ['拍照', 'cos'])
+        self.assertEqual(circle['2026-10-03']['p']['拍照'], [['14:00', '18:00', 24]])
+        self.assertEqual(circle['2026-09-30']['title'], 'ijoy')
+        self.assertEqual(circle['2026-10-01'].get('p', {}).get('cos'), None)        # sooner than 30 days
+        self.assertEqual(circle['2026-10-30']['p']['cos'], 'ask')
+        close, names = days({'level': 'close'})
+        self.assertEqual(names, ['吃饭', '逛街', '拍照', 'cos', '旅行'])
+        self.assertEqual(close['2026-10-03']['p']['吃饭'], [['10:00', '21:00', 2]])
+        self.assertEqual(close['2026-10-13']['p']['逛街'], [['18:30', '21:00', 2]])
+        from build import LEVEL_SETTINGS
+        import build
+        old = build.LEVEL_SETTINGS
+        try:
+            build.LEVEL_SETTINGS = check_levels({'con': {'ordinary': False}})
+            strict, _ = project_days({'level': 'con'}, result, NOW)
+            self.assertEqual(strict['2026-10-13']['base'], 'off')
+        finally:
+            build.LEVEL_SETTINGS = old
+
+    def test_my_own_day_off_and_extra_workday(self):
+        from build import classify
+        self.assertEqual(classify('调休', True)[0], 'as_rest')
+        self.assertEqual(classify('补班', True)[0], 'as_work')
+        events = [item(datetime(2026, 10, 13, tzinfo=TZ), datetime(2026, 10, 14, tzinfo=TZ), 'as_rest', all_day=True)]
+        self.assertEqual(build_data(CFG, HOLIDAYS, {}, events, NOW)['days']['2026-10-13']['dayType'], 'restday')
 
     def test_private_secret_empty_is_valid(self):
         with patch.dict(os.environ, {'MYSLOT_PRIVATE_JSON': ''}):
@@ -332,7 +385,7 @@ class CalendarTests(unittest.TestCase):
             main()
             result = open_sealed(json.loads((Path(folder)/'dist'/'availability.json').read_text()), 'friend-0001')
         self.assertTrue(result['syncFailed'])
-        self.assertTrue(all(v['status']=='locked' for v in result['days'].values()))
+        self.assertTrue(all(v['base']=='locked' and 'p' not in v for v in result['days'].values()))
         self.assertIn('feishu_credentials_missing', log.getvalue())
 
     def test_caldav_duration_without_dtend(self):
@@ -359,7 +412,7 @@ class CalendarTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as folder, patch.object(sys, 'argv', ['build.py', '--output', folder]), redirect_stdout(io.StringIO()) as log:
                 main()
                 result = open_sealed(json.loads((Path(folder)/'availability.json').read_text()), 'friend-0001')
-            self.assertTrue(all(v['status']=='locked' for v in result['days'].values()))
+            self.assertTrue(all(v['base']=='locked' and 'p' not in v for v in result['days'].values()))
             self.assertNotIn('工作事业', log.getvalue())
 
 

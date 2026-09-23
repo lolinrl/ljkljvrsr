@@ -1,0 +1,52 @@
+{
+  "owner": "Jan",
+  "timeZone": "Asia/Shanghai",
+  "calendarMode": "icloud",
+  "calendarSources": [
+    "icloud"
+  ],
+  "schedule": {
+    "mode": "weekly",
+    "workdaysIso": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "anchor": "2026-09-21",
+    "workDays": 4,
+    "restDays": 2,
+    "holidaysOverride": true
+  },
+  "windows": {
+    "workday": [
+      [
+        "18:30",
+        "19:00"
+      ]
+    ],
+    "restday": [
+      [
+        "12:00",
+        "18:00"
+      ]
+    ],
+    "convention": [
+      [
+        "12:00",
+        "18:00"
+      ]
+    ]
+  },
+  "stepMinutes": 30,
+  "leadHours": {
+    "workday": 4,
+    "restday": 24,
+    "convention": 2
+  },
+  "cosLeadDays": 30,
+  "daysAhead": 90,
+  "bufferMinutes": 60,
+  "weeklyMax": 3
+}

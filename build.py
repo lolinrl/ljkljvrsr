@@ -20,6 +20,9 @@ DEFAULT_RULES = {
     'booked': ['已约'],
     # 私密开放日: "预留-xx" is open only to the person whose code has reserve "xx".
     'reserve': ['预留'],
+    # All-day events that change the day type: my own day off / extra working day.
+    'restday': ['调休'],
+    'workday': ['补班'],
     # 半开放日: "漫展-xx" publishes only "xx"; a bare word publishes the word.
     # seenBy: levels that see the name. others: what everyone else sees
     # ("event" = 有安排、可以约吃饭, "busy" = 不可用).
@@ -42,7 +45,7 @@ def word_pattern(word):
 
 def check_rules(rules):
     rules = dict(DEFAULT_RULES, **(rules or {}))
-    for key in ('busy', 'booked', 'reserve'):
+    for key in ('busy', 'booked', 'reserve', 'restday', 'workday'):
         if not isinstance(rules[key], list) or not all(isinstance(w, str) and w.strip() for w in rules[key]):
             raise ValueError('invalid rules')
     for rule in rules['semi']:
@@ -62,6 +65,10 @@ def classify(summary, all_day=False, rules=None):
     summary = summary.strip()
     if any(re.search(r'^\s*【?' + word_pattern(w), summary, re.I) for w in rules['booked']):
         return 'booked', '', ''
+    if all_day and any(re.search(word_pattern(w), summary, re.I) for w in rules['restday']):
+        return 'as_rest', '', ''
+    if all_day and any(re.search(word_pattern(w), summary, re.I) for w in rules['workday']):
+        return 'as_work', '', ''
     for w in rules['reserve']:
         found = re.search(word_pattern(w) + NAME_AFTER, summary, re.I)
         if found:
@@ -385,12 +392,19 @@ def build_data(cfg, holiday_data, private, events, now, safe=False):
         day = first + timedelta(days=index)
         key = day.isoformat()
         kind = day_type(day, cfg, private, holidays, makeup)
+        marks = {v['kind'] for v in by_date.get(key, [])}
+        if 'as_rest' in marks and key not in private.get('dateTypes', {}):
+            kind = 'restday'
+        elif 'as_work' in marks and key not in private.get('dateTypes', {}):
+            kind = 'workday'
         entry = {'status': 'locked', 'dayType': kind}
         if key in labels:
             entry['festival'] = labels[key]
         active = by_date.get(key, [])
         # One meet-up a day: a confirmed 已约 closes the rest of that day.
         if safe or key in locked or any(v['kind'] in ('lock', 'booked') for v in active):
+            if not safe:
+                entry['busy'] = True   # an activity, not just "no slot left" (only 长辈 view uses it)
             output[key] = entry
             continue
         reserves = [v for v in active if v['kind'] == 'reserve']
@@ -401,9 +415,16 @@ def build_data(cfg, holiday_data, private, events, now, safe=False):
         # All-day ordinary events (回老家, travel...) keep the day open; only the
         # place changes. Only timed ordinary events occupy time.
         busy = [v for v in active if v['kind'] == 'private' and not v['allDay']]
+        # Busy minutes of this day (with the rest-day buffer) for per-project time slots.
+        pad = buffer if kind == 'restday' else timedelta(0)
+        entry['busyTimes'] = sorted(
+            [max(0, int((v['start'] - pad - beginning).total_seconds() // 60)),
+             min(1440, int(-(-(v['end'] + pad - beginning).total_seconds() // 60)))]
+            for v in busy if v['end'] + pad > beginning and v['start'] - pad < ending)
         if not convention and kind == 'restday' and any(
             (min(v['end'], ending) - max(v['start'], beginning)).total_seconds() > 3*3600
             for v in busy):
+            entry['busy'] = True
             output[key] = entry
             continue
         if convention:
@@ -427,6 +448,17 @@ def build_data(cfg, holiday_data, private, events, now, safe=False):
             pad = buffer if kind == 'restday' else timedelta(0)
             padded = [dict(v, start=v['start'] - pad, end=v['end'] + pad) for v in busy]
             windows = subtract_busy(windows_for(day, cfg, kind, None), padded, beginning, step)
+        # Private facts for the per-person views; view_for / project views strip them.
+        monday = day - timedelta(days=day.weekday())
+        entry['_full'] = booked_weeks.get(monday, 0) >= weekly_max
+        if reserves:
+            entry['_reserve'] = sorted({v['title'] for v in reserves})
+        elif convention:
+            entry['_semi'] = {
+                'title': ' / '.join(dict.fromkeys(v['title'] for v in conventions))[:40],
+                'group': conventions[0].get('group') or ('回老家' if conventions[0]['title'] == '回老家' else '漫展'),
+                'windows': [[int((a - beginning).total_seconds() // 60), int((b - beginning).total_seconds() // 60)]
+                            for a, b in windows]}
         if not has_allowed_start(day, windows, now, lead[kind], step):
             output[key] = entry
             continue
@@ -438,9 +470,8 @@ def build_data(cfg, holiday_data, private, events, now, safe=False):
             entry['title'] = ' / '.join(dict.fromkeys(v['title'] for v in conventions))[:40]
             first_mark = conventions[0]
             entry['group'] = first_mark.get('group') or ('回老家' if first_mark['title'] == '回老家' else '漫展')
-        monday = day - timedelta(days=day.weekday())
-        if booked_weeks.get(monday, 0) >= weekly_max:
-            entry = {k: v for k, v in entry.items() if k in ('dayType', 'festival')}
+        if entry['_full']:
+            entry = {k: v for k, v in entry.items() if k in ('dayType', 'festival') or k.startswith('_')}
             entry['status'] = 'full'
         output[key] = entry
     return {'schema': 2, 'owner': cfg['owner'], 'timeZone': cfg['timeZone'],
@@ -474,6 +505,8 @@ def share_codes():
             raise ValueError('invalid share codes')
         if entry.get('level', 'friend') not in LEVELS:
             raise ValueError('invalid share codes')
+        if 'ordinary' in entry and not isinstance(entry['ordinary'], bool):
+            raise ValueError('invalid share codes')
         see = entry.get('see', [])
         if not (isinstance(see, list) and all(isinstance(v, str) for v in see)):
             raise ValueError('invalid share codes')
@@ -487,6 +520,37 @@ def share_codes():
 
 
 LEVELS = {'elder', 'friend', 'con', 'close'}
+# Per level: display name, whether days without a matching project show 可以商量, and the simple
+# 空闲/上班/有安排 view. Editable in config "levels" (settings.html).
+DEFAULT_LEVELS = {
+    'friend': {'name': '朋友', 'ordinary': True, 'simple': False},
+    'elder': {'name': '长辈', 'ordinary': True, 'simple': True},
+    'con': {'name': '圈内好友', 'ordinary': True, 'simple': False},
+    'close': {'name': '密友', 'ordinary': True, 'simple': False},
+}
+LEVEL_SETTINGS = DEFAULT_LEVELS
+
+
+def check_levels(levels):
+    merged = {k: dict(v) for k, v in DEFAULT_LEVELS.items()}
+    for key, value in (levels or {}).items():
+        if key not in merged or not isinstance(value, dict):
+            raise ValueError('invalid levels')
+        for field in ('ordinary', 'simple'):
+            if field in value and not isinstance(value[field], bool):
+                raise ValueError('invalid levels')
+        merged[key].update({k: v for k, v in value.items() if k in ('name', 'ordinary', 'simple')})
+    return merged
+
+
+def semi_visibility(entry, group, title, rules=None):
+    """(can this person see the name?, what others see: 'event' | 'busy')."""
+    rules = rules or RULES
+    rule = {r['word']: r for r in rules['semi']}.get(group, {'seenBy': ['close'], 'others': 'event'})
+    also = set(entry.get('also', [])) | ({'回老家'} if entry.get('home') is True else set())
+    shown = (entry.get('level', 'friend') in rule.get('seenBy', []) or group in also
+             or any(n in title.split(' / ') for n in entry.get('see', [])))
+    return shown, rule.get('others', 'event')
 
 
 def view_for(entry, result, rules=None):
@@ -497,16 +561,22 @@ def view_for(entry, result, rules=None):
     also: extra 半开放 words for this person (home: true is short for also 回老家).
     see: extra single names (the xx) for this person; the code then ends after the last one.
     reserve: the xx in 预留-xx. Anyone can be given one.
-    elder: only free / busy (and names of 半开放 days they may see).
+    elder: only 空闲 / 上班 / 有安排 (and names of 半开放 days they may see).
     """
     rules = rules or RULES
     level = entry.get('level', 'friend')
+    settings = LEVEL_SETTINGS.get(level, DEFAULT_LEVELS['friend'])
+    simple = settings['simple']
+    # ordinary: can this person book plain open days? A per-person value wins.
+    ordinary = entry['ordinary'] if isinstance(entry.get('ordinary'), bool) else settings['ordinary']
     see, mine = entry.get('see', []), entry.get('reserve')
     also = set(entry.get('also', [])) | ({'回老家'} if entry.get('home') is True else set())
     semi = {r['word']: r for r in rules['semi']}
     days, marked = {}, []
     for key, value in result['days'].items():
-        day = dict(value)
+        day = {k: v for k, v in value.items() if not k.startswith('_') and k != 'busyTimes'}
+        had_plans = (day.pop('busy', False) or day['status'] in ('reserved', 'event')
+                     or '_semi' in value or '_reserve' in value)
         closed = {k: v for k, v in day.items() if k in ('dayType', 'festival')}
         if day['status'] == 'reserved':
             if mine and mine in day.pop('for'):
@@ -526,18 +596,152 @@ def view_for(entry, result, rules=None):
                     day = dict(closed, status='locked')   # e.g. away from town
                 else:
                     del day['title']
-        if level == 'elder':
+        if not simple and not ordinary and (day['status'] == 'full' or
+                                            (day['status'] == 'open' and not day.get('forYou'))):
+            day = dict(closed, status='off')   # not offered to this person; shown neutrally
+        if simple:
             if day['status'] == 'event' and 'title' in day:
                 day = dict(closed, status='mark', title=day['title'])
+            elif had_plans:
+                day = dict(closed, status='busy')        # shown as 有安排, never 忙
+            elif day.get('dayType') == 'workday':
+                day = dict(closed, status='work')        # 搬砖日
             else:
-                free = day['status'] == 'open' and day.get('dayType') == 'restday'
-                day = dict(closed, status='free' if free else 'busy')
+                day = dict(closed, status='free')
             day.pop('dayType', None)
         days[key] = day
     return days, (max(marked) if marked and see else None)
 
 
-def seal_for_codes(result, codes, today, rules=None):
+# What people can ask for, and when. Editable in config "projects" (settings.html).
+# rest / work: time ranges offered on rest days / workdays ("14:00-18:00"); leave the key
+# out to not offer that day type. slot false = no time picking, just a date to discuss.
+DEFAULT_PROJECTS = [
+    {'project': '吃饭', 'levels': ['friend'], 'rest': ['14:00-18:00'], 'leadHours': 24},
+    {'project': '吃饭', 'tags': ['住得近'], 'work': ['18:30-20:00'], 'leadHours': 2},
+    {'project': '逛街', 'levels': ['friend'], 'rest': ['14:00-18:00'], 'leadHours': 24},
+    {'project': '拍照', 'levels': ['con'], 'rest': ['14:00-18:00'], 'leadHours': 24},
+    {'project': 'cos', 'levels': ['con', 'close'], 'rest': [], 'work': [], 'slot': False, 'leadHours': 720},
+    {'project': '旅行', 'levels': ['close'], 'rest': [], 'slot': False, 'leadHours': 336},
+    {'project': '吃饭', 'levels': ['close'], 'rest': ['10:00-21:00'], 'work': ['18:30-21:00'], 'leadHours': 2},
+    {'project': '逛街', 'levels': ['close'], 'rest': ['10:00-21:00'], 'work': ['18:30-21:00'], 'leadHours': 2},
+    {'project': '拍照', 'levels': ['close'], 'rest': ['10:00-21:00'], 'work': ['18:30-21:00'], 'leadHours': 2},
+]
+PROJECTS = DEFAULT_PROJECTS
+RANGE = re.compile(r'^(\d{1,2}:\d{2})\s*[-–~～至到]\s*(\d{1,2}:\d{2})$')
+
+
+def parse_range(text):
+    found = RANGE.match(text.strip())
+    if not found:
+        raise ValueError('invalid time range')
+    a = minutes(found.group(1))
+    b = 1440 if found.group(2) == '24:00' else minutes(found.group(2))
+    if a >= b:
+        raise ValueError('invalid time range')
+    return a, b
+
+
+def check_projects(projects):
+    projects = DEFAULT_PROJECTS if projects is None else projects
+    if not isinstance(projects, list):
+        raise ValueError('invalid projects')
+    for row in projects:
+        if not (isinstance(row, dict) and isinstance(row.get('project'), str) and row['project'].strip()):
+            raise ValueError('invalid projects')
+        if any(v not in LEVELS for v in row.get('levels', [])) or not all(isinstance(t, str) for t in row.get('tags', [])):
+            raise ValueError('invalid projects')
+        lead = row.get('leadHours', 24)
+        if isinstance(lead, bool) or not isinstance(lead, (int, float)) or not 0 <= lead <= 24 * 365:
+            raise ValueError('invalid projects')
+        for field in ('rest', 'work'):
+            for text in row.get(field, []):
+                parse_range(text)
+    return projects
+
+
+def rows_for(entry, projects):
+    level, tags = entry.get('level', 'friend'), set(entry.get('tags', []))
+    return [r for r in projects if level in r.get('levels', []) or tags & set(r.get('tags', []))]
+
+
+def cut(windows, busy):
+    for a, b in busy:
+        windows = [piece for s, e in windows
+                   for piece in ((s, min(e, a)), (max(s, b), e)) if piece[0] < piece[1]]
+    return windows
+
+
+def project_days(entry, result, now, rules=None, step=30):
+    """Per-person calendar by project. Only real plans close a day; the rest is 可以商量."""
+    rules = rules or RULES
+    tz = ZoneInfo(result['timeZone'])
+    rows = rows_for(entry, PROJECTS)
+    order = list(dict.fromkeys(r['project'] for r in PROJECTS))   # same tab order for everyone
+    names = sorted(dict.fromkeys(r['project'] for r in rows), key=order.index)
+    level = entry.get('level', 'friend')
+    settings = LEVEL_SETTINGS.get(level, DEFAULT_LEVELS['friend'])
+    talk = entry['ordinary'] if isinstance(entry.get('ordinary'), bool) else settings['ordinary']
+    local_now = now.astimezone(tz)
+    days = {}
+    for key, raw in result['days'].items():
+        day = {k: v for k, v in raw.items() if k in ('dayType', 'festival')}
+        day_start = datetime.combine(date.fromisoformat(key), time.min, tzinfo=tz)
+        offers = {}
+        if raw.get('busy') or 'busyTimes' not in raw:     # real plans, or no data (sync failed)
+            base = 'locked'
+        elif raw.get('_reserve'):
+            mine = entry.get('reserve') in raw['_reserve']
+            base = 'ok' if mine else 'locked'
+            if mine:
+                day['forYou'] = True
+        elif raw.get('_semi'):
+            semi = raw['_semi']
+            shown, others = semi_visibility(entry, semi['group'], semi['title'], rules)
+            if shown:
+                base, day['title'] = 'semi', semi['title']
+            else:
+                base = 'locked' if others == 'busy' else 'plans'
+        elif raw.get('_full') or raw['status'] == 'full':
+            base = 'full'
+        else:
+            base = 'ok'
+        if base == 'semi':
+            # Meet inside the marked time only, for any project that picks a time.
+            for name in names:
+                picks = [r for r in rows if r['project'] == name and r.get('slot', True)]
+                if picks:
+                    lead = min(r.get('leadHours', 24) for r in picks)
+                    offers[name] = [w + [lead] for w in raw['_semi']['windows']]
+        elif base == 'ok':
+            field = 'rest' if raw['dayType'] == 'restday' else 'work'
+            for r in rows:
+                if field not in r:
+                    continue
+                lead = r.get('leadHours', 24)
+                if not r.get('slot', True):
+                    first_day = (local_now + timedelta(hours=lead)).date().isoformat()
+                    if key >= first_day and not isinstance(offers.get(r['project']), list):
+                        offers[r['project']] = 'ask'
+                    continue
+                earliest = (local_now + timedelta(hours=lead) - day_start).total_seconds() / 60
+                for a, b in cut([parse_range(t) for t in r[field]], raw.get('busyTimes', [])):
+                    a = int(-(-max(a, earliest) // step) * step)
+                    b = int(b // step * step)
+                    if b - a >= step:
+                        current = offers.get(r['project'])
+                        offers[r['project']] = (current if isinstance(current, list) else []) + [[a, b, lead]]
+            if not offers and not talk:
+                base = 'off'
+        day['base'] = base
+        if offers:
+            day['p'] = {k: (v if v == 'ask' else [[f'{a // 60:02d}:{a % 60:02d}', f'{b // 60:02d}:{b % 60:02d}', lead]
+                                                  for a, b, lead in v]) for k, v in offers.items()}
+        days[key] = day
+    return days, names
+
+
+def seal_for_codes(result, codes, today, rules=None, now=None):
     """Replace the whole public output with one encrypted copy per share code.
 
     The published file holds only ciphertext; codes live in a GitHub Secret.
@@ -559,10 +763,21 @@ def seal_for_codes(result, codes, today, rules=None):
             days = {k: v for k, v in days.items() if k <= until}
         payload = {k: v for k, v in result.items() if k not in ('days', 'owner')}
         payload.update(owner=entry.get('name') or result['owner'], until=until, days=days)
-        if entry.get('level') == 'elder':
+        for field in ('leadHours', 'cosLeadDays', 'syncFailed'):
+            payload.pop(field, None)
+        payload['syncFailed'] = bool(result.get('syncFailed'))
+        if LEVEL_SETTINGS.get(entry.get('level', 'friend'), {}).get('simple'):
             payload['simple'] = True
-            for field in ('stepMinutes', 'leadHours', 'cosLeadDays'):
-                payload.pop(field, None)
+            payload.pop('stepMinutes', None)
+        else:
+            pdays, names = project_days(entry, result, now or datetime.now(timezone.utc), rules,
+                                        result.get('stepMinutes', 30))
+            if until:
+                pdays = {k: v for k, v in pdays.items() if k <= until}
+            slot_of = {}
+            for r in rows_for(entry, PROJECTS):
+                slot_of[r['project']] = slot_of.get(r['project'], False) or r.get('slot', True)
+            payload.update(days=pdays, projects=[{'name': n, 'slot': slot_of[n]} for n in names])
         salt, nonce = os.urandom(16), os.urandom(12)
         key = PBKDF2HMAC(SHA256(), 32, salt, SHARE_ITERATIONS).derive(code.encode('utf-8'))
         data = AESGCM(key).encrypt(nonce, json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'), None)
@@ -601,10 +816,12 @@ def main():
     args = parser.parse_args()
     cfg, config_problem = load_config()
     holiday_data = json.loads((ROOT/'holidays-cn.json').read_text(encoding='utf-8'))
-    global RULES
+    global RULES, LEVEL_SETTINGS, PROJECTS
     rules_broken = False
     try:
         RULES = check_rules(cfg.get('rules'))
+        LEVEL_SETTINGS = check_levels(cfg.get('levels'))
+        PROJECTS = check_projects(cfg.get('projects'))
     except (ValueError, TypeError):
         rules_broken = True  # never guess: a broken rule list closes every day
     now = datetime.now(timezone.utc)
@@ -615,7 +832,8 @@ def main():
     events, private, safe, codes = [], {}, False, []
     if args.fixture:
         codes = [{'code': 'demo-close', 'level': 'close', 'reserve': '星星', 'name': '示例CN'},
-                 {'code': 'demo-friend'}]
+                 {'code': 'demo-friend'}, {'code': 'demo-near', 'tags': ['住得近']},
+                 {'code': 'demo-circle', 'level': 'con'}, {'code': 'demo-elder', 'level': 'elder'}]
         today = datetime.combine(now.astimezone(tz).date(), time.min, tzinfo=tz)
         show = today + timedelta(days=3)
         events = [
@@ -668,7 +886,7 @@ def main():
             # A typo here only disables codes; the public page still updates.
             print('Share codes ignored (share_codes_invalid).')
             codes = []
-    result, active, skipped = seal_for_codes(result, codes, now.astimezone(tz).date().isoformat())
+    result, active, skipped = seal_for_codes(result, codes, now.astimezone(tz).date().isoformat(), now=now)
     result['demo'] = args.fixture
     print(f'Share codes: {active} active, {skipped} expired or too short.' +
           (' Nobody can open the page until a code is added.' if not active else ''))

@@ -98,6 +98,16 @@ def end_minutes(value):
     return 1440 if value.strip() in ('00:00', '0:00', '24:00') else minutes(value)
 
 
+def energy_setting(cfg, name, default, low, high):
+    """Energy settings never stop the calendar: a blank or odd value falls back to the default."""
+    value = cfg.get(name, default)
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
+        return default
+    return value
+
+
 def minutes(value):
     h, m = map(int, value.split(':'))
     if not 0 <= h < 24 or not 0 <= m < 60:
@@ -382,8 +392,10 @@ def build_data(cfg, holiday_data, private, events, now, safe=False):
     for event in events:
         for day in touched_days(event):
             by_date.setdefault(day, []).append(event)
-    buffer = timedelta(minutes=cfg.get('bufferMinutes', 60))
-    weekly_max = cfg.get('weeklyMax', 3)
+    buffer = timedelta(minutes=energy_setting(cfg, 'bufferMinutes', 60, 0, 720))
+    weekly_max = energy_setting(cfg, 'weeklyMax', 3, 0, 100)
+    if weekly_max == 0:
+        weekly_max = float('inf')      # 0 = no weekly limit
     booked_weeks = {}
     for event in events:
         if event['kind'] == 'booked':
@@ -830,10 +842,6 @@ def config_problems(cfg):
         problems.append('leadHours')
     if not number(cfg.get('daysAhead'), 1, 366) or not isinstance(cfg.get('daysAhead'), int):
         problems.append('daysAhead')
-    if not number(cfg.get('bufferMinutes', 60), 0, 720):
-        problems.append('bufferMinutes')
-    if not number(cfg.get('weeklyMax', 3), 1, 100):
-        problems.append('weeklyMax')
     return problems
 
 
@@ -862,6 +870,9 @@ def main():
     parser.add_argument('--fixture', action='store_true')
     args = parser.parse_args()
     cfg, config_problem = load_config()
+    for name, label, default, low, high in (('weeklyMax', '每周最多约几次', 3, 0, 100), ('bufferMinutes', '活动前后留出', 60, 0, 720)):
+        if name in cfg and energy_setting(cfg, name, default, low, high) != cfg[name]:
+            print(f'Setting「{label}」looks blank or odd; using {default}.')
     holiday_data = json.loads((ROOT/'holidays-cn.json').read_text(encoding='utf-8'))
     global RULES, LEVEL_SETTINGS, PROJECTS
     rules_broken = False

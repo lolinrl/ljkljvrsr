@@ -1,0 +1,63 @@
+name: Build and deploy availability
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      fixture:
+        description: 'Publish fictional test data (visible to anyone with the Pages URL)'
+        type: boolean
+        required: true
+        default: false
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: ${{ github.event_name != 'schedule' || vars.MYSLOT_LIVE == 'true' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Run tests
+        run: python -m unittest discover -s tests
+      - name: Compute fictional test state
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.fixture }}
+        run: python build.py --fixture --output dist
+      - name: Compute real public state
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.fixture }}
+        env:
+          ICLOUD_USER: ${{ secrets.ICLOUD_USER }}
+          ICLOUD_APP_PASSWORD: ${{ secrets.ICLOUD_APP_PASSWORD }}
+          MYSLOT_BUSY_CALENDARS: ${{ secrets.MYSLOT_BUSY_CALENDARS }}
+          MYSLOT_PUBLIC_CALENDAR: ${{ secrets.MYSLOT_PUBLIC_CALENDAR }}
+          MYSLOT_PRIVATE_JSON: ${{ secrets.MYSLOT_PRIVATE_JSON }}
+          MYSLOT_SHARE_CODES: ${{ secrets.MYSLOT_SHARE_CODES }}
+          MYSLOT_CONFIG_JSON: ${{ secrets.MYSLOT_CONFIG_JSON }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          MYSLOT_GOOGLE_CALENDARS: ${{ secrets.MYSLOT_GOOGLE_CALENDARS }}
+          FEISHU_CALDAV_URL: ${{ secrets.FEISHU_CALDAV_URL }}
+          FEISHU_CALDAV_USER: ${{ secrets.FEISHU_CALDAV_USER }}
+          FEISHU_CALDAV_PASSWORD: ${{ secrets.FEISHU_CALDAV_PASSWORD }}
+          MYSLOT_FEISHU_CALENDARS: ${{ secrets.MYSLOT_FEISHU_CALENDARS }}
+        run: python build.py --output dist
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4

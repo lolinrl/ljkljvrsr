@@ -41,12 +41,44 @@
   },
   "stepMinutes": 30,
   "leadHours": {
-    "workday": 4,
+    "workday": 2,
     "restday": 24,
     "convention": 2
   },
   "cosLeadDays": 30,
   "daysAhead": 90,
   "bufferMinutes": 60,
-  "weeklyMax": 3
+  "weeklyMax": 3,
+  "rules": {
+    "busy": [
+      "聚会",
+      "拍照",
+      "cos",
+      "【休息】"
+    ],
+    "booked": [
+      "已约"
+    ],
+    "reserve": [
+      "预留"
+    ],
+    "semi": [
+      {
+        "word": "漫展",
+        "seenBy": [
+          "con",
+          "close"
+        ],
+        "others": "event"
+      },
+      {
+        "word": "回老家",
+        "seenBy": [
+          "elder",
+          "close"
+        ],
+        "others": "busy"
+      }
+    ]
+  }
 }

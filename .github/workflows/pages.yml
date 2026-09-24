@@ -45,6 +45,7 @@ jobs:
           MYSLOT_PUBLIC_CALENDAR: ${{ secrets.MYSLOT_PUBLIC_CALENDAR }}
           MYSLOT_PRIVATE_JSON: ${{ secrets.MYSLOT_PRIVATE_JSON }}
           MYSLOT_SHARE_CODES: ${{ secrets.MYSLOT_SHARE_CODES }}
+          MYSLOT_OWNER_CODE: ${{ secrets.MYSLOT_OWNER_CODE }}
           MYSLOT_CONFIG_JSON: ${{ secrets.MYSLOT_CONFIG_JSON }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}

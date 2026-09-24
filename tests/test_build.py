@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from build import view_for, seal_for_codes, build_data, event_kind, fetch_icloud, fetch_feishu, fetch_google, main, private_rules, SyncError
+from build import day_facts, person_days, summary_days, payload_for, seal_for_codes, event_kind, fetch_icloud, fetch_feishu, fetch_google, main, private_rules, SyncError
 
 # Tests use their own fixed settings, so whatever you save from settings.html into
 # config.json (rules, levels, projects, time windows...) can never break them.
@@ -28,6 +28,10 @@ CFG = {
 HOLIDAYS = json.loads((ROOT / 'holidays-cn.json').read_text())
 TZ = ZoneInfo('Asia/Shanghai')
 NOW = datetime(2026, 9, 28, 8, tzinfo=TZ)
+
+
+def facts(events, private=None, now=None, **settings):
+    return day_facts(dict(CFG, **settings), HOLIDAYS, private or {}, events, now or NOW)
 
 
 def item(start, end, kind='private', title='', all_day=False):
@@ -55,7 +59,8 @@ class CalendarTests(unittest.TestCase):
     def setUp(self):
         # main() loads rules / levels / projects from a config; start every test from the defaults.
         import build
-        build.RULES, build.LEVEL_SETTINGS, build.PROJECTS = build.DEFAULT_RULES, build.DEFAULT_LEVELS, build.DEFAULT_PROJECTS
+        build.RULES, build.ACTIVITIES = build.DEFAULT_RULES, build.DEFAULT_ACTIVITIES
+        build.SUMMARIES, build.TEXTS = build.DEFAULT_SUMMARIES, build.DEFAULT_TEXTS
         self._root = patch('build.ROOT', self._project_copy())
         self._root.start()
 
@@ -91,183 +96,157 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(event_kind('开会'), ('private', ''))
         self.assertEqual(event_kind('预留-星星'), ('reserve', '星星'))
         self.assertEqual(event_kind('预留-cos组'), ('reserve', 'cos组'))
-    def test_private_day_has_priority_over_convention(self):
-        events = [item(d(30), d(30)+timedelta(days=1), 'convention', 'ijoy', True),
-                  item(d(30, 13), d(30, 14), 'lock')]
-        output = build_data(CFG, HOLIDAYS, {}, events, NOW)['days']['2026-09-30']
-        self.assertEqual(output['status'], 'locked')
-        self.assertNotIn('ijoy', json.dumps(output))
+    # The people from the requirements walk-through.
+    A = {'code': 'a-0000000001', 'label': 'A', 'city': '老家', 'see': ['漫展', '回老家'], 'activities': ['吃饭', '问问我']}
+    C = {'code': 'c-0000000001', 'label': 'C', 'see': ['漫展'], 'activities': ['吃饭', '吃饭（工作日）', '逛街']}
+    Dd = {'code': 'd-0000000001', 'label': 'D', 'see': ['漫展'], 'activities': ['拍照', 'cos（已有衣服）', 'cos（新衣服）']}
+    CLIENT = {'code': 'k-0000000001', 'label': '客户', 'activities': ['拍照']}
+    PARENTS = {'code': 'p-0000000001', 'label': '爸妈', 'summary': True}
+    SAT = datetime(2026, 10, 17, tzinfo=TZ)      # a plain rest day
+    MON = datetime(2026, 10, 12, tzinfo=TZ)      # a plain workday
 
-    def test_restday_event_over_three_hours_locks_day(self):
-        for hours, expected in [(3, 'open'), (3.5, 'locked')]:
-            with self.subTest(hours=hours):
-                events = [item(d(27, 10), d(27, 10)+timedelta(hours=hours))]
-                output = build_data(CFG, HOLIDAYS, {}, events, d(26, 8))
-                self.assertEqual(output['days']['2026-09-27']['status'], expected)
+    def view(self, who, events=(), now=None, **settings):
+        return person_days(who, facts(list(events), now=now, **settings), now or NOW)[0]
 
-    def test_work_shift_does_not_block_dinner_but_conflict_does(self):
-        shift = item(d(28, 9), d(28, 18))
-        free = build_data(CFG, HOLIDAYS, {}, [shift], NOW)['days']['2026-09-28']
-        busy = build_data(CFG, HOLIDAYS, {}, [shift, item(d(28, 18, 45), d(28, 19))], NOW)['days']['2026-09-28']
-        self.assertEqual(free['status'], 'open')
-        self.assertEqual(free['windows'], [['18:30', '19:00']])
-        self.assertEqual(busy['status'], 'locked')
+    def test_plain_rest_day(self):
+        key = '2026-10-17'
+        self.assertEqual(self.view(self.C)[key]['offers'], {'吃饭': [['14:00', '18:00', 24]], '逛街': [['14:00', '18:00', 24]]})
+        self.assertEqual(self.view(self.Dd)[key]['offers']['拍照'], [['14:00', '18:00', 24]])
+        self.assertEqual(self.view(self.Dd)[key]['offers']['cos（已有衣服）'], 'ask')
+        self.assertNotIn('cos（新衣服）', self.view(self.Dd)['2026-10-03']['offers'])   # 5 days away: needs 14
+        self.assertIn('cos（新衣服）', self.view(self.Dd)[key]['offers'])               # 19 days away
+        self.assertEqual(self.view(self.A)[key]['offers'], {'问问我': 'ask'})       # A lives elsewhere: 💬 only
+        self.assertEqual(self.view(self.CLIENT)[key]['offers'], {'拍照': [['14:00', '18:00', 24]]})
 
-    def test_half_available_day_uses_normal_windows(self):
-        events = [item(d(27), d(27)+timedelta(days=1), 'convention', '回老家', True)]
-        result = build_data(CFG, HOLIDAYS, {}, events, d(26, 8))['days']['2026-09-27']
-        self.assertEqual(result['status'], 'event')
-        self.assertEqual(result['title'], '回老家')
-        self.assertEqual(result['windows'], [['12:00', '16:00']])
-    def test_timed_event_removes_busy_time_on_restday(self):
-        # 2026-09-25 is a public holiday (restday); a 3-hour event is not long enough to close it.
-        cfg = dict(CFG, windows=dict(CFG['windows'], restday=[['12:00', '18:00']]))
-        events = [item(d(25, 13, 15), d(25, 16, 15))]
-        result = build_data(cfg, HOLIDAYS, {}, events, d(23, 17))['days']['2026-09-25']
-        self.assertEqual(result['status'], 'open')
-        self.assertEqual(result['windows'], [['17:30', '18:00']])  # 1 h buffer on both sides
-        no_buffer = build_data(dict(cfg, bufferMinutes=0), HOLIDAYS, {}, events, d(23, 17))['days']['2026-09-25']
-        self.assertEqual(no_buffer['windows'], [['12:00', '13:00'], ['16:30', '18:00']])
+    def test_plain_workday(self):
+        key = '2026-10-12'
+        self.assertEqual(self.view(self.C)[key]['offers'], {'吃饭（工作日）': [['18:30', '20:00', 2]]})
+        self.assertNotIn('offers', self.view(self.Dd)[key])                        # —
+        self.assertNotIn('offers', self.view(self.CLIENT)[key])
+        self.assertEqual(self.view(self.A)[key]['offers'], {'问问我': 'ask'})
 
-    def test_all_day_ordinary_event_keeps_day_open(self):
-        for day in (27, 29):  # restday and workday
-            with self.subTest(day=day):
-                events = [item(d(day), d(day)+timedelta(days=1), all_day=True)]
-                result = build_data(CFG, HOLIDAYS, {}, events, d(26, 8))['days'][f'2026-09-{day}']
-                self.assertEqual(result['status'], 'open')
-    def test_all_day_rest_marker_locks_day(self):
-        events = [item(d(29), d(29)+timedelta(days=1), 'lock', all_day=True)]
-        result = build_data(CFG, HOLIDAYS, {}, events, d(26, 8))['days']['2026-09-29']
-        self.assertEqual(result['status'], 'locked')
+    def test_convention_day(self):
+        con = [item(self.SAT, self.SAT+timedelta(days=1), 'convention', 'ijoy', True),
+               item(self.SAT+timedelta(hours=13), self.SAT+timedelta(hours=16), 'lock')]    # a shoot at the convention
+        for who in (self.A, self.C, self.Dd):
+            self.assertEqual(self.view(who, con)['2026-10-17']['tag'], 'ijoy')
+        self.assertEqual(self.view(self.Dd, con)['2026-10-17']['offers']['拍照'], [['12:00', '13:00', 24]])
+        self.assertEqual(self.view(self.CLIENT, con)['2026-10-17'], {'dayType': 'restday'})   # —, no hint
+        client_fan = dict(self.CLIENT, see=['漫展'])                                            # 同城二次元客户
+        self.assertEqual(self.view(client_fan, con)['2026-10-17']['tag'], 'ijoy')
 
-    def test_convention_time_is_bookable_despite_other_events(self):
-        # Timed 漫展 10:15-17:00 on a rest day, plus a long ordinary event.
-        events = [item(d(27, 10, 15), d(27, 17), 'convention', 'ijoy'),
-                  item(d(27, 9), d(27, 15))]
-        result = build_data(CFG, HOLIDAYS, {}, events, d(25, 8))['days']['2026-09-27']
-        self.assertEqual(result['status'], 'event')
-        self.assertEqual(result['title'], 'ijoy')
-        self.assertEqual(result['windows'], [['10:30', '17:00']])
+    def test_home_visit(self):
+        home = [item(self.SAT, self.SAT+timedelta(days=2), 'convention', '回老家', True)]
+        a = self.view(self.A, home)['2026-10-17']
+        self.assertEqual(a['tag'], '回老家')
+        self.assertEqual(a['offers']['吃饭'], [['14:00', '18:00', 24]])           # same city that day
+        c = self.view(self.C, home)['2026-10-17']
+        self.assertNotIn('tag', c)
+        self.assertNotIn('offers', c)                                           # I am not in C's city
+        self.assertEqual(summary_days(self.PARENTS, facts(home))['2026-10-17'], {'kind': 'mark', 'label': '在家'})
 
-    def test_all_day_convention_uses_convention_window(self):
-        events = [item(d(30), d(30)+timedelta(days=1), 'convention', 'ijoy', True),
-                  item(d(30, 18, 30), d(30, 19))]
-        result = build_data(CFG, HOLIDAYS, {}, events, NOW)['days']['2026-09-30']
-        self.assertEqual(result['status'], 'event')
-        self.assertEqual(result['windows'], [['12:00', '16:00']])
-    def test_notice_and_restday_cutoff(self):
-        result = build_data(CFG, HOLIDAYS, {}, [], d(27, 9))['days']['2026-09-27']
-        self.assertEqual(result['status'], 'locked')
-        future = build_data(CFG, HOLIDAYS, {}, [], d(26, 8))['days']['2026-09-27']
-        self.assertEqual(future['windows'], [['12:00', '16:00']])
-        self.assertTrue(all(int(a[:2]) >= 12 for day in future['windows'] for a in day[:1]))
+    def test_parents_see_only_summaries(self):
+        f = facts([item(self.SAT, self.SAT+timedelta(days=1), 'convention', 'ijoy', True),
+                   item(self.SAT+timedelta(days=1, hours=13), self.SAT+timedelta(days=1, hours=16), 'lock')])
+        f['days']['2026-10-18'].setdefault('marks', ['拍照'])
+        days = summary_days(self.PARENTS, f)
+        self.assertEqual(days['2026-10-12'], {'kind': 'work', 'label': '上班'})
+        self.assertEqual(days['2026-10-17'], {'kind': 'mark', 'label': '出去玩'})
+        self.assertEqual(days['2026-10-24'], {'kind': 'free', 'label': '空闲'})
+        payload = payload_for(self.PARENTS, f, NOW)[0]
+        self.assertTrue(payload['simple'])
+        self.assertNotIn('activities', payload)
 
-    def test_cycle_with_manual_day_type_and_holidays_switch(self):
-        cfg = json.loads(json.dumps(CFG))
-        cfg['schedule'] = {'mode': 'cycle', 'anchor': '2026-09-28', 'workDays': 2,
-                           'restDays': 2, 'holidaysOverride': False}
-        result = build_data(cfg, HOLIDAYS, {}, [], NOW)
-        self.assertEqual(result['days']['2026-09-28']['dayType'], 'workday')
-        self.assertEqual(result['days']['2026-09-30']['dayType'], 'restday')
-        self.assertEqual(result['days']['2026-10-01']['dayType'], 'restday')
-        overridden = build_data(cfg, HOLIDAYS, {'dateTypes': {'2026-09-30': 'workday'}}, [], NOW)
-        self.assertEqual(overridden['days']['2026-09-30']['dayType'], 'workday')
+    def test_big_plans_booked_and_rest_stop_new_invitations_but_keep_shared_items(self):
+        con = item(self.SAT, self.SAT+timedelta(days=1), 'convention', 'ijoy', True)
+        for blocker in (item(self.SAT, self.SAT+timedelta(days=1), 'lock', all_day=True),
+                        item(self.SAT+timedelta(hours=19), self.SAT+timedelta(hours=20), 'booked'),
+                        item(self.SAT, self.SAT+timedelta(days=1), 'energy', all_day=True)):
+            with self.subTest(kind=blocker['kind']):
+                day = self.view(self.Dd, [con, blocker])['2026-10-17']
+                self.assertEqual(day['tag'], 'ijoy')                               # still shared
+                self.assertNotIn('offers', day)                                    # nothing new
+        busy = self.view(self.C, [item(self.SAT+timedelta(hours=10), self.SAT+timedelta(hours=12), 'lock')])['2026-10-17']
+        self.assertNotIn('offers', busy)                                            # a timed big plan closes a plain day
+
+    def test_ordinary_events_take_their_time_plus_buffer(self):
+        e = [item(self.SAT+timedelta(hours=15), self.SAT+timedelta(hours=16))]
+        self.assertEqual(self.view(self.C, e)['2026-10-17']['offers']['吃饭'], [['17:00', '18:00', 24]])
+        self.assertEqual(self.view(self.C, e, bufferMinutes=0)['2026-10-17']['offers']['吃饭'],
+                         [['14:00', '15:00', 24], ['16:00', '18:00', 24]])
+
+    def test_week_limit_and_lead_time(self):
+        booked = [item(datetime(2026, 10, d, 19, tzinfo=TZ), datetime(2026, 10, d, 20, tzinfo=TZ), 'booked') for d in (12, 13, 14)]
+        self.assertNotIn('offers', self.view(self.C, booked)['2026-10-17'])
+        self.assertIn('offers', self.view(self.C, booked)['2026-10-24'])
+        self.assertIn('offers', self.view(self.C, booked, weeklyMax=0)['2026-10-17'])
+        now = datetime(2026, 10, 12, 17, tzinfo=TZ)
+        self.assertEqual(self.view(self.C, now=now)['2026-10-12']['offers']['吃饭（工作日）'], [['19:00', '20:00', 2]])
+
+    def test_reserved_day(self):
+        r = [item(self.SAT, self.SAT+timedelta(days=1), 'reserve', 'C', True)]
+        mine = self.view(dict(self.C, reserve='C'), r)['2026-10-17']
+        self.assertTrue(mine['forYou'])
+        self.assertIn('offers', mine)
+        self.assertNotIn('offers', self.view(self.Dd, r)['2026-10-17'])
+
+    def test_schedule_and_my_own_day_off(self):
+        cfg = dict(CFG, schedule={'mode': 'cycle', 'anchor': '2026-09-28', 'workDays': 2, 'restDays': 2,
+                                  'holidaysOverride': False})
+        f = day_facts(cfg, HOLIDAYS, {'dateTypes': {'2026-09-30': 'workday'}}, [], NOW)['days']
+        self.assertEqual([f[k]['dayType'] for k in ('2026-09-28', '2026-09-30', '2026-10-01')], ['workday', 'workday', 'restday'])
+        self.assertEqual(facts([])['days']['2026-10-10']['dayType'], 'workday')              # 补班
+        off = [item(self.MON, self.MON+timedelta(days=1), 'as_rest', all_day=True)]
+        self.assertEqual(facts(off)['days']['2026-10-12']['dayType'], 'restday')
+        self.assertTrue(facts([], private={'lockedDates': ['2026-10-17']})['days']['2026-10-17']['closed'])
+
+    def test_old_level_codes_still_work(self):
+        from build import person
+        self.assertEqual(person({'code': 'x', 'level': 'friend'})['activities'], ['吃饭', '逛街'])
+        self.assertIn('漫展', person({'code': 'x', 'level': 'con'})['see'])
+        self.assertTrue(person({'code': 'x', 'level': 'elder'})['summary'])
+        self.assertIn('吃饭（工作日）', person({'code': 'x', 'tags': ['住得近']})['activities'])
+        self.assertIn('回老家', person({'code': 'x', 'home': True})['see'])
+
+    def test_owner_view_holds_everyone_and_needs_a_long_code(self):
+        try:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: F401
+        except ImportError:
+            self.skipTest('cryptography is not installed')
+        f = facts([])
+        codes = [self.A, self.C, self.PARENTS]
+        public, active, _ = seal_for_codes(f, codes, '2026-09-28', now=NOW, owner_code='owner-code-1234567890')
+        self.assertEqual((active, len(public['sealed'])), (3, 4))
+        owner = open_sealed(public, 'owner-code-1234567890')
+        self.assertTrue(owner['ownerView'])
+        self.assertEqual([p['label'] for p in owner['people']], ['A', 'C', '爸妈'])
+        self.assertNotIn('a-0000000001', json.dumps(owner))                    # no codes inside
+        short, _, _ = seal_for_codes(f, codes, '2026-09-28', now=NOW, owner_code='short-owner')
+        self.assertEqual(len(short['sealed']), 3)
 
     def test_whole_page_is_sealed_per_code(self):
         try:
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-            from cryptography.hazmat.primitives.hashes import SHA256
-            from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: F401
         except ImportError:
             self.skipTest('cryptography is not installed')
-        import base64
-        events = [item(d(30), d(30)+timedelta(days=1), 'convention', 'ijoy', True),
-                  item(d(29), d(29)+timedelta(days=1), 'reserve', '星星', True)]
-        result = build_data(CFG, HOLIDAYS, {}, events, NOW)
-        self.assertEqual(result['days']['2026-09-29']['status'], 'reserved')
-        codes = [{'code': 'xingxing-7342', 'see': ['ijoy'], 'reserve': '星星', 'name': '江江'},
-                 {'code': 'coworker-1180'},                                       # plain friend
-                 {'code': 'old-code-1', 'level': 'close', 'until': '2026-09-01'},     # expired
-                 {'code': 'short'}]                                                # too short
-        public, active, skipped = seal_for_codes(result, codes, '2026-09-28', now=NOW)
+        events = [item(d(30), d(30)+timedelta(days=1), 'convention', 'ijoy', True)]
+        codes = [dict(self.Dd, see=['ijoy'], name='江江'),                  # only this one convention
+                 {'code': 'coworker-1180', 'activities': ['吃饭']},
+                 {'code': 'old-code-1', 'until': '2026-09-01'},
+                 {'code': 'short'}]
+        public, active, skipped = seal_for_codes(facts(events), codes, '2026-09-28', now=NOW)
         self.assertEqual((active, skipped), (2, 2))
-        # Only ciphertext is published. (Checking for words inside random base64 would be flaky.)
         self.assertEqual(set(public), {'schema', 'iterations', 'sealed'})
         self.assertTrue(all(set(box) == {'s', 'n', 'd'} for box in public['sealed']))
-        text = json.dumps(public, ensure_ascii=False)
-        for secret in ('江江', '星星', '2026-09'):              # cannot appear in base64 at all
-            self.assertNotIn(secret, text)
-
-        def open_box(code):
-            for box in public['sealed']:
-                key = PBKDF2HMAC(SHA256(), 32, base64.b64decode(box['s']), public['iterations']).derive(code.encode())
-                try:
-                    return json.loads(AESGCM(key).decrypt(base64.b64decode(box['n']), base64.b64decode(box['d']), None))
-                except Exception:
-                    pass
-        star = open_box('xingxing-7342')
-        self.assertEqual(star['owner'], '江江')
-        self.assertEqual(star['until'], '2026-09-30')          # ends after her last marked day
-        self.assertEqual(star['days']['2026-09-30']['title'], 'ijoy')
-        self.assertEqual(star['days']['2026-09-30']['base'], 'semi')
-        self.assertEqual(star['days']['2026-09-29']['base'], 'ok')
-        self.assertTrue(star['days']['2026-09-29']['forYou'])
-        self.assertNotIn('p', star['days']['2026-09-29'])      # a friend has no workday project: 可以商量
-        friend = open_box('coworker-1180')
-        self.assertIsNone(friend['until'])
-        self.assertEqual(friend['owner'], CFG['owner'])
-        self.assertEqual(friend['days']['2026-09-29'], {'base': 'locked', 'dayType': 'workday'})
-        self.assertEqual(friend['days']['2026-09-30'], {'base': 'plans', 'dayType': 'workday'})
-        self.assertEqual([p['name'] for p in friend['projects']], ['吃饭', '逛街'])
-        for secret in ('busyTimes', '_semi', '_reserve', '_full'):
-            self.assertNotIn(secret, json.dumps(star) + json.dumps(friend))
-        self.assertIsNone(open_box('old-code-1'))
-        forever = [{'code': 'forever-111111', 'see': ['ijoy'], 'until': '2026-09-01', 'forever': True}]
-        public, active, _ = seal_for_codes(result, forever, '2026-09-28')
-        self.assertEqual(active, 1)
-    def test_levels_decide_what_each_person_sees(self):
-        events = [item(d(30), d(30)+timedelta(days=1), 'convention', 'ijoy', True),
-                  item(d(29), d(29)+timedelta(days=1), 'convention', '回老家', True)]
-        result = build_data(CFG, HOLIDAYS, {}, events, NOW)
-        def seen(entry):
-            days, _ = view_for(entry, result)
-            return days['2026-09-29'], days['2026-09-30']
-        home, con = seen({'level': 'friend'})
-        self.assertEqual(home['status'], 'locked')
-        self.assertEqual((con['status'], 'title' in con), ('event', False))
-        home, con = seen({'level': 'friend', 'home': True})
-        self.assertEqual(home['title'], '回老家')
-        home, con = seen({'level': 'elder'})
-        self.assertEqual((home, con), ({'status': 'mark', 'title': '回老家'}, {'status': 'busy'}))
-        elder_days = view_for({'level': 'elder'}, result)[0]
-        self.assertEqual(elder_days['2026-09-28'], {'status': 'work'})             # workday
-        self.assertTrue(all('busy' not in v for v in view_for({'level': 'close'}, result)[0].values()))
-        # A rest day that is closed only because it is too soon is still 空闲 for parents.
-        soon = view_for({'level': 'elder'}, build_data(CFG, HOLIDAYS, {}, [], d(27, 9)))[0]
-        self.assertEqual(soon['2026-09-27'], {'status': 'free'})
-        cos = build_data(CFG, HOLIDAYS, {}, [item(d(27), d(28), 'lock', all_day=True)], d(25, 9))
-        self.assertEqual(view_for({'level': 'elder'}, cos)[0]['2026-09-27'], {'status': 'busy'})
-        self.assertTrue(all(set(v) <= {'status', 'festival', 'title'} for v in elder_days.values()))
-        home, con = seen({'level': 'con'})
-        self.assertEqual((home['status'], con['title']), ('locked', 'ijoy'))
-        home, con = seen({'level': 'close'})
-        self.assertEqual((home['title'], con['title']), ('回老家', 'ijoy'))
-        self.assertTrue(all('group' not in v for v in view_for({'level': 'close'}, result)[0].values()))
-
-    def test_booked_closes_day_and_weekly_limit(self):
-        self.assertEqual(event_kind('已约-星星 吃饭'), ('booked', ''))
-        self.assertEqual(event_kind('【已约】阿拍'), ('booked', ''))
-        cfg = dict(CFG, weeklyMax=3)
-        # Week of Mon 2026-10-12: three confirmed meet-ups.
-        booked = [item(datetime(2026, 10, day, 18, 30, tzinfo=TZ), datetime(2026, 10, day, 19, tzinfo=TZ), 'booked')
-                  for day in (12, 13, 14)]
-        days = build_data(cfg, HOLIDAYS, {}, booked, NOW)['days']
-        self.assertEqual(days['2026-10-12']['status'], 'locked')
-        self.assertEqual(days['2026-10-15']['status'], 'full')
-        self.assertNotIn('windows', days['2026-10-15'])
-        self.assertEqual(days['2026-10-20']['status'], 'open')   # next week is fresh
-        two = build_data(cfg, HOLIDAYS, {}, booked[:2], NOW)['days']
-        self.assertEqual(two['2026-10-15']['status'], 'open')
+        for secret in ('江江', '2026-09'):
+            self.assertNotIn(secret, json.dumps(public, ensure_ascii=False))
+        star = open_sealed(public, 'd-0000000001')
+        self.assertEqual((star['owner'], star['until']), ('江江', '2026-09-30'))   # ends after that convention
+        self.assertEqual(star['days']['2026-09-30']['tag'], 'ijoy')
+        friend = open_sealed(public, 'coworker-1180')
+        self.assertNotIn('tag', friend['days']['2026-09-30'])
+        for private_field in ('"busy":', '"items":', '"reserve":', '"closed":', '"marks":'):
+            self.assertNotIn(private_field, json.dumps(star) + json.dumps(friend))
 
     def test_share_code_typing_is_forgiven(self):
         from build import normalize_code
@@ -275,81 +254,31 @@ class CalendarTests(unittest.TestCase):
             self.assertEqual(normalize_code(typed), '星星-936265', typed)
         self.assertEqual(normalize_code('Apai-1'), 'apai-1')
 
-    def test_custom_rules_from_config(self):
+    def test_custom_markers(self):
         from build import classify, check_rules
-        rules = check_rules({'busy': ['加班'], 'booked': ['OK'], 'reserve': ['留给'],
-                             'semi': [{'word': '出差', 'seenBy': ['close'], 'others': 'busy'},
-                                      {'word': '展会', 'seenBy': ['con', 'close'], 'others': 'event'}]})
-        self.assertEqual(classify('加班到很晚', rules=rules)[0], 'lock')
-        self.assertEqual(classify('聚会', rules=rules)[0], 'private')        # not in this person's list
+        rules = check_rules({'busy': ['加班'], 'booked': ['OK'], 'rest': ['摆烂'], 'reserve': ['留给'],
+                             'semi': [{'word': '出差', 'location': '上海'}, {'word': '展会'}]})
+        self.assertEqual(classify('加班到很晚', rules=rules), ('lock', '', '加班'))
+        self.assertEqual(classify('聚会', rules=rules)[0], 'private')
         self.assertEqual(classify('OK-阿拍', rules=rules)[0], 'booked')
+        self.assertEqual(classify('今天摆烂', True, rules)[0], 'energy')
         self.assertEqual(classify('留给-星星', True, rules)[:2], ('reserve', '星星'))
         self.assertEqual(classify('展会-CP30', rules=rules), ('convention', 'CP30', '展会'))
-        self.assertEqual(classify('去上海出差', True, rules), ('convention', '出差', '出差'))
         with self.assertRaises(ValueError):
-            check_rules({'semi': [{'word': '', 'others': 'maybe'}]})
-        events = [item(d(29), d(29)+timedelta(days=1), 'convention', '出差', True),
-                  item(d(30), d(30)+timedelta(days=1), 'convention', 'CP30', True)]
-        events[0]['group'], events[1]['group'] = '出差', '展会'
-        result = build_data(CFG, HOLIDAYS, {}, events, NOW)
-        friend = view_for({'level': 'friend', 'also': ['展会']}, result, rules)[0]
-        self.assertEqual(friend['2026-09-29']['status'], 'locked')
-        self.assertEqual(friend['2026-09-30']['title'], 'CP30')
+            check_rules({'semi': [{'word': ''}]})
 
-    def test_projects_light_up_different_days_per_person(self):
-        from build import project_days, check_levels
-        # Sat 10-03 is a holiday rest day; Mon 10-12 a workday with dinner 19:00-20:00 booked privately.
-        events = [item(datetime(2026, 10, 12, 19, tzinfo=TZ), datetime(2026, 10, 12, 20, tzinfo=TZ)),
-                  item(d(30), d(30)+timedelta(days=1), 'convention', 'ijoy', True)]
-        result = build_data(CFG, HOLIDAYS, {}, events, NOW)
-        def days(entry):
-            return project_days(entry, result, NOW)
-        friend, names = days({'level': 'friend'})
-        self.assertEqual(names, ['吃饭', '逛街'])
-        self.assertEqual(friend['2026-10-03']['p']['吃饭'], [['14:00', '18:00', 24]])
-        self.assertEqual(friend['2026-10-12'], {'dayType': 'workday', 'base': 'ok'})   # 可以商量
-        self.assertEqual(friend['2026-09-30']['base'], 'plans')
-        near, _ = days({'level': 'friend', 'tags': ['住得近']})
-        self.assertEqual(near['2026-10-13']['p']['吃饭'], [['18:30', '20:00', 2]])
-        self.assertEqual(near['2026-10-12']['p']['吃饭'], [['18:30', '19:00', 2]])   # dinner 19:00-20:00 is taken
-        circle, names = days({'level': 'con'})
-        self.assertEqual(names, ['拍照', 'cos'])
-        self.assertEqual(circle['2026-10-03']['p']['拍照'], [['14:00', '18:00', 24]])
-        self.assertEqual(circle['2026-09-30']['title'], 'ijoy')
-        self.assertEqual(circle['2026-10-01'].get('p', {}).get('cos'), None)        # sooner than 30 days
-        self.assertEqual(circle['2026-10-30']['p']['cos'], 'ask')
-        close, names = days({'level': 'close'})
-        self.assertEqual(names, ['吃饭', '逛街', '拍照', 'cos', '旅行'])
-        self.assertEqual(close['2026-10-03']['p']['吃饭'], [['10:00', '21:00', 2]])
-        self.assertEqual(close['2026-10-13']['p']['逛街'], [['18:30', '21:00', 2]])
-        from build import LEVEL_SETTINGS
-        import build
-        old = build.LEVEL_SETTINGS
-        try:
-            build.LEVEL_SETTINGS = check_levels({'con': {'ordinary': False}})
-            strict, _ = project_days({'level': 'con'}, result, NOW)
-            self.assertEqual(strict['2026-10-13']['base'], 'off')
-        finally:
-            build.LEVEL_SETTINGS = old
-
-    def test_my_own_day_off_and_extra_workday(self):
-        from build import classify
-        self.assertEqual(classify('调休', True)[0], 'as_rest')
-        self.assertEqual(classify('补班', True)[0], 'as_work')
-        events = [item(datetime(2026, 10, 13, tzinfo=TZ), datetime(2026, 10, 14, tzinfo=TZ), 'as_rest', all_day=True)]
-        self.assertEqual(build_data(CFG, HOLIDAYS, {}, events, NOW)['days']['2026-10-13']['dayType'], 'restday')
-
-    def test_window_ending_at_midnight(self):
-        from build import parse_range, config_problems
+    def test_settings_checks(self):
+        from build import parse_range, config_problems, check_activities
         self.assertEqual(parse_range('20:00-00:00'), (1200, 1440))
-        cfg = dict(CFG, windows=dict(CFG['windows'], workday=[['18:30', '00:00']]))
-        self.assertEqual(config_problems(cfg), [])
-        self.assertEqual(build_data(cfg, HOLIDAYS, {}, [], NOW)['days']['2026-09-29']['windows'], [['18:30', '24:00']])
-
-    def test_odd_energy_settings_fall_back_instead_of_failing(self):
+        self.assertEqual(config_problems(dict(CFG, windows={'convention': [['18:00', '00:00']]})), [])
+        self.assertIn('windows.convention', config_problems(dict(CFG, windows={'convention': [['18:00', '12:00']]})))
+        with self.assertRaises(ValueError):
+            check_activities([{'name': '吃饭', 'rest': ['14点-18点']}])
+        with self.assertRaises(ValueError):
+            check_activities([{'name': '吃饭'}])                              # no days at all
         for value in (None, '', 'abc', -1, 0, '3'):
             with self.subTest(value=value):
-                build_data(dict(CFG, weeklyMax=value, bufferMinutes=value), HOLIDAYS, {}, [], NOW)
+                facts([], weeklyMax=value, bufferMinutes=value)
 
     def test_private_secret_empty_is_valid(self):
         with patch.dict(os.environ, {'MYSLOT_PRIVATE_JSON': ''}):
@@ -425,7 +354,7 @@ class CalendarTests(unittest.TestCase):
             main()
             result = open_sealed(json.loads((Path(folder)/'dist'/'availability.json').read_text()), 'friend-0001')
         self.assertTrue(result['syncFailed'])
-        self.assertTrue(all(v['base']=='locked' and 'p' not in v for v in result['days'].values()))
+        self.assertTrue(all('offers' not in v and 'tag' not in v for v in result['days'].values()))
         self.assertIn('feishu_credentials_missing', log.getvalue())
 
     def test_caldav_duration_without_dtend(self):
@@ -452,7 +381,7 @@ class CalendarTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as folder, patch.object(sys, 'argv', ['build.py', '--output', folder]), redirect_stdout(io.StringIO()) as log:
                 main()
                 result = open_sealed(json.loads((Path(folder)/'availability.json').read_text()), 'friend-0001')
-            self.assertTrue(all(v['base']=='locked' and 'p' not in v for v in result['days'].values()))
+            self.assertTrue(all('offers' not in v and 'tag' not in v for v in result['days'].values()))
             self.assertNotIn('工作事业', log.getvalue())
 
 

@@ -59,7 +59,7 @@ for cal in calendars:
             else:
                 f = b + (timedelta(days=1) if all_day else timedelta(hours=1))
             title = str(c.get('SUMMARY', ''))
-            kind, label = build.event_kind(title)
+            kind, label, group = build.classify(title, all_day)
             transp = str(c.get('TRANSP', '')).upper()
             status = str(c.get('STATUS', '')).upper()
             if cal.name not in monitored:
@@ -70,13 +70,22 @@ for cal in calendars:
                 why = '✗ 「显示为：空闲」，会被忽略（全天事件默认就是空闲）'
             else:
                 why = f'✓ 会使用（{kind}）'
-                used.append({'start': b, 'end': f, 'kind': kind, 'title': label, 'allDay': all_day})
+                used.append({'start': b, 'end': f, 'kind': kind, 'title': label, 'allDay': all_day, 'group': group})
             when = '全天' if all_day else f"{b:%H:%M}–{f:%H:%M}"
             print(f'  [{cal.name}] {when} {title!r}  → {why}')
 
 now = datetime.now(tz)
-result = build.build_data(cfg, holidays, {}, used, now)['days'].get(day.isoformat())
-print(f'\n按当前 config.json，{day} 的结果：{result}')
-if result:
-    print('  规则：上班日只看 18:30–19:00 前后是否冲突；休息日普通事件要超过 3 小时才关闭；'
-          '法定假日按休息日算；距离现在太近（提前时间不足）也会关闭。')
+facts = build.day_facts(cfg, holidays, {}, used, now)['days'].get(day.isoformat())
+print(f'\n{day} 这一天，程序看到的是：')
+if not facts:
+    print('  （不在显示范围内）')
+else:
+    print(f"  日子类型：{'休息日' if facts['dayType'] == 'restday' else '工作日'}")
+    if facts.get('noNew'):
+        print('  这天不接新的约（大安排、已约或躺平）')
+    for i in facts.get('items', []):
+        print(f"  公开项：{i['title']}（{i['word']}）")
+    if facts.get('location'):
+        print(f"  这天你在：{facts['location']}")
+    for a, b in facts.get('busy', []):
+        print(f'  普通活动占用（含缓冲）：{int(a)//60:02d}:{int(a)%60:02d}–{int(b)//60:02d}:{int(b)%60:02d}')

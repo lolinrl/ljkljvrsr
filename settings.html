@@ -1,117 +1,268 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MySlot 设置</title>
-<style>body{font:15px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color:#40343b;background:#faf5f3;margin:0}main{max-width:740px;margin:22px auto;padding:30px;background:#fff;border:1px solid #f1e6e4;border-radius:23px}h1{margin:0 0 10px}p,small{color:#756c72}fieldset{border:1px solid #eee2e2;border-radius:12px;margin:15px 0;padding:16px}legend{font-weight:750}label{display:inline-flex;align-items:center;gap:6px;margin:5px 10px 5px 0}input,select{font:inherit;padding:6px;border:1px solid #d8cdd1;border-radius:8px}input[type=time],input[type=number]{max-width:110px}input[type=file]{max-width:100%}button{font:inherit;border:0;border-radius:10px;background:#c86d7b;color:#fff;padding:11px 17px;cursor:pointer}.hint{background:#fcf5f2;border-radius:11px;padding:12px}#result{color:#975666}#cycle[hidden],#weekly[hidden]{display:none}@media(max-width:750px){main{margin:0;padding:19px;border-radius:0}}</style>
-<main><h1>我的预约设置</h1><p>只编辑公开规则。你可以先载入原有文件，再调整并下载新的配置；日历账户和密码始终留在 GitHub Secrets。</p>
-<label>载入原有 config.json <input type="file" id="existing" accept=".json,application/json"></label>
-<form id="form">
-<fieldset><legend>基本信息</legend><label>页面称呼 <input id="owner" value="Jan" required></label><label>时区 <input id="timezone" value="Asia/Shanghai" required></label></fieldset>
-<fieldset><legend>需要读取哪些账户</legend><label><input type="checkbox" name="source" value="icloud" checked>iCloud</label><label><input type="checkbox" name="source" value="google">Google / Gmail</label><label><input type="checkbox" name="source" value="feishu">飞书 CalDAV</label><p class="hint">勾选的每个账户都需要分别设置账号授权和要读取的日历名称；缺少任一来源会保守关闭全部日期。手机日历里并排显示的账户不会自动合并到 iCloud。</p></fieldset>
-<fieldset><legend>上班和休息</legend><label>排班方式 <select id="mode"><option value="weekly">固定星期</option><option value="cycle">上几天休几天</option></select></label><div id="weekly"></div><div id="cycle" hidden><label>周期首个上班日 <input id="anchor" type="date" value="2026-09-21"></label><label>连续上班 <input id="workDays" type="number" min="1" max="30" value="4"> 天</label><label>连续休息 <input id="restDays" type="number" min="1" max="30" value="2"> 天</label></div><label><input id="holiday" type="checkbox" checked>用法定放假和补班覆盖排班</label><p class="hint">轮班人若不按法定假日休息，取消这一项。临时休息日可以直接在选中的日历写 <code>【休息】</code>，当天会关闭。</p></fieldset>
-<fieldset><legend>全天半开放日的见面时段</legend><small>比如全天漫展那天，能看到名字的人可以约的时段（只用下面「漫展」一行）。其他时段在「项目」里设置。</small><div><label>上班日 <input id="workStart" type="time" value="18:30"></label><label>至 <input id="workEnd" type="time" value="19:00"></label></div><div><label>休息日 <input id="restStart" type="time" value="12:00"></label><label>至 <input id="restEnd" type="time" value="16:00"></label></div><div><label>漫展 <input id="eventStart" type="time" value="12:00"></label><label>至 <input id="eventEnd" type="time" value="16:00"></label></div><small>有时间的漫展标记会再缩到事件时间范围内；全天漫展使用这里的范围。想早点出门时可改成 11:00。</small></fieldset>
-<fieldset hidden><legend>至少提前多久</legend><label>上班日聚餐 <input id="workLead" type="number" min="0" max="2160" step="0.5" value="4"> 小时</label><label>休息日聚餐 <input id="restLead" type="number" min="0" max="2160" step="0.5" value="24"> 小时</label><label>漫展见面 <input id="eventLead" type="number" min="0" max="2160" step="0.5" value="24"> 小时</label><label>cos 计划 <input id="cosLead" type="number" min="1" max="90" value="30"> 天</label></fieldset>
-<fieldset><legend>档位</legend><small>分享码按档位决定能看到什么。名字只给你自己看，别人看不到自己是哪一档。</small><div id="lv"></div></fieldset>
-<fieldset><legend>项目</legend><small>朋友先选想约什么，日历再亮出能约的日子。一行是「谁、在什么日子、什么时段、提前多久」可以约这个项目；同一个项目可以有好几行（比如朋友和密友时段不同）。没亮的日子只要没有大安排，都显示「可以商量」。</small>
-<div id="pj"></div><button type="button" id="pj-add">＋ 加一行</button></fieldset>
-<fieldset><legend>日历标记规则</legend><small>标题里出现这些词就按对应规则处理。多个词用逗号隔开。</small>
-<label>全私密日（整天不可用） <input id="r-busy" value="聚会,拍照,cos,【休息】"></label>
-<label>已约好（当天其他时间关闭，计入每周上限；写在标题开头） <input id="r-booked" value="已约"></label>
-<label>私密开放日（写成「词-代号」，只对这个代号开放） <input id="r-reserve" value="预留"></label>
-<label>我自己的休息日（全天事件，比如调休、请假） <input id="r-restday" value="调休"></label>
-<label>我自己的工作日（全天事件，比如补班、换班） <input id="r-workday" value="补班"></label>
-<div><strong>半开放日</strong> <small>写成「词-名字」只公开名字；只写词就公开这个词。</small></div>
-<div id="r-semi"></div><button type="button" id="r-add">＋ 加一种半开放日</button></fieldset>
-<fieldset><legend>保护电量</legend><div><label>活动前后留出（分钟，只用于休息日） <input id="buffer" type="number" min="0" max="240" step="15" value="60"></label><label>每周最多约几次（0 = 不限） <input id="weekly" type="number" min="0" max="14" value="3"></label></div><small>日历里写「已约-xx」的算一次；当天其他时间自动关闭。</small></fieldset><button type="submit">下载 config.json</button> <span id="result" role="status"></span>
-</form>
-<section class="codes" id="codes"><h2>分享码清单</h2>
-<p>清单只保存在你电脑上的一个文件里（建议放在 iCloud 云盘，比如 <code>myslot-codes.json</code>）。每次：打开清单文件 → 增删 → 保存清单文件 → 复制给 Secret。这里的一切都只在你的电脑上处理，不会上传。</p>
-<div class="row"><label class="filebtn">打开清单文件 <input id="l-open" type="file" accept=".json,application/json"></label><button type="button" id="l-save">保存清单文件</button><button type="button" id="l-copy">复制给 Secret</button><button type="button" id="l-clean">清理已过期</button></div>
-<p id="l-status" class="status-line">还没有打开清单。第一次使用可以直接开始添加。</p>
-<div class="table-wrap"><table id="l-table"><thead><tr><th>分享码</th><th>档位</th><th>额外</th><th>称呼</th><th>有效期</th><th>发放</th><th>备注</th><th></th></tr></thead><tbody></tbody></table></div>
-<h3>添加一个人</h3>
-<div class="row"><label>对方代号 <input id="c-who" placeholder="比如 星星"></label><label>档位 <select id="c-level"><option value="friend">朋友</option><option value="elder">长辈</option><option value="con">圈内好友</option><option value="close">密友</option></select></label></div>
-<div class="row"><label>额外能看到的半开放日 <input id="c-also" placeholder="比如 回老家，多个用逗号"></label><label>标签 <input id="c-tags" placeholder="比如 住得近，多个用逗号"></label><label>给 Ta 的预留代号 <input id="c-reserve" placeholder="日历写 预留-xx 的 xx，可空"></label></div>
-<div class="row" hidden><label><input id="c-ord" type="checkbox"> 也能约平常日子</label></div>
-<div class="row"><label>Ta 看到的称呼 <input id="c-name" placeholder="空着就显示页面称呼"></label><label><input id="c-forever" type="checkbox"> 永久有效</label><label>失效日期 <input id="c-until" type="date"></label></div>
-<div class="row"><label style="flex:1">备注（只给你自己看） <input id="c-note" style="width:100%" placeholder="比如 漫展群认识的"></label></div>
-<button type="button" id="c-make">生成并加入清单</button><pre id="c-out" hidden></pre>
-<details><summary>检查某个码 / 手动粘贴清单</summary>
-<p>也可以把清单内容直接粘贴到这里再点「载入」。</p><textarea id="k-list" rows="4" style="width:100%" placeholder='[{"code": "...", ...}]'></textarea>
-<div class="row"><button type="button" id="k-load">载入</button><label>要检查的码 <input id="k-code"></label><button type="button" id="k-run">检查</button></div><pre id="k-out" hidden></pre></details>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MySlot 设置</title>
+<style>
+:root{--bg:#faf6f4;--card:#fff;--ink:#3d3339;--muted:#7a7077;--line:#ece2e0;--soft:#f8f2f1;--rose:#c86d7b;--ok:#3f7a5e;--warn:#a2563f}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#1b1719;--card:#241f22;--ink:#ece5e9;--muted:#a79da4;--line:#3b3337;--soft:#2c2629;--rose:#e28e9c;--ok:#8fcaa9;--warn:#e6a28a}}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+main{max-width:860px;margin:0 auto;padding-inline:16px;padding-block:24px 70px}
+h1{margin:0 0 4px;font-size:26px}h2{font-size:18px;margin:0 0 4px}
+p,small,.muted{color:var(--muted)}small{display:block;margin:2px 0 8px;font-size:12.5px}
+section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin:14px 0}
+label{display:inline-flex;align-items:center;gap:6px;margin:4px 12px 4px 0;flex-wrap:wrap}
+input,select,textarea{font:inherit;color:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+input[type=time]{width:110px}input[type=number]{width:72px}textarea{width:100%}
+button{font:inherit;border:0;border-radius:10px;background:var(--rose);color:#fff;padding:9px 15px;cursor:pointer}
+button.ghost{background:var(--soft);color:var(--ink)}button.small{padding:5px 10px;font-size:13px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.status{font-size:13px;color:var(--ok);background:var(--soft);border-radius:10px;padding:8px 12px;margin:10px 0 0}
+.status.err{color:var(--warn)}
+.row{background:var(--soft);border-radius:12px;padding:10px 12px;margin:8px 0;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
+.row .grow{flex:1;min-width:140px}
+.table-wrap{overflow-x:auto;margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13px;min-width:640px}
+th,td{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;white-space:nowrap;vertical-align:top}
+th{color:var(--muted);font-size:12px}
+tr.expired td{color:var(--muted);text-decoration:line-through}tr.expired td:last-child{text-decoration:none}
+.checks label{margin-right:10px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--soft);padding:12px;border-radius:10px;font-size:13px}
+code{background:var(--soft);padding:1px 5px;border-radius:5px}
+</style>
+</head>
+<body>
+<main>
+<h1>MySlot 设置</h1>
+<p>只在你自己的电脑上打开。这里做两件事：生成 <code>config.json</code>（规则），管理分享码清单（人）。日历账号和密码始终只放在 GitHub Secrets。</p>
+
+<section>
+  <h2>配置文件</h2>
+  <div class="bar"><label>载入原有 config.json <input type="file" id="cfg-file" accept=".json,application/json"></label>
+  <button type="button" id="cfg-save">下载 config.json</button></div>
+  <p id="cfg-status" class="status" hidden></p>
+  <small>下载后，把文件内容整段粘贴进 Secret <code>MYSLOT_CONFIG_JSON</code>（不公开）。</small>
 </section>
+
+<section>
+  <h2>基本</h2>
+  <label>默认称呼 <input id="owner" value="Jan"></label>
+  <label>时区 <input id="timezone" value="Asia/Shanghai"></label>
+  <div class="checks"><span class="muted">读取哪些日历账户：</span>
+    <label><input type="checkbox" name="source" value="icloud" checked>iCloud</label>
+    <label><input type="checkbox" name="source" value="google">Google</label>
+    <label><input type="checkbox" name="source" value="feishu">飞书</label></div>
+</section>
+
+<section>
+  <h2>上班和休息</h2>
+  <label>排班 <select id="mode"><option value="weekly">固定星期</option><option value="cycle">上几天休几天</option></select></label>
+  <div id="mode-weekly" class="checks"></div>
+  <div id="mode-cycle" hidden><label>周期第一天 <input id="anchor" type="date" value="2026-09-21"></label><label>上 <input id="workDays" type="number" min="1" max="30" value="4"> 天</label><label>休 <input id="restDays" type="number" min="1" max="30" value="2"> 天</label></div>
+  <label><input id="holiday" type="checkbox" checked>按法定放假和补班调整</label>
+</section>
+
+<section>
+  <h2>日历里怎么标</h2>
+  <small>标题里出现这些词就按对应规则处理，多个词用逗号隔开。</small>
+  <div><label class="grow">大安排（这天不接新的约） <input id="r-busy" size="30"></label></div>
+  <div><label>已约好（写在标题开头，算一次） <input id="r-booked"></label><label>躺平（这天不接新的约） <input id="r-rest"></label></div>
+  <div><label>留给某人（写成「词-代号」） <input id="r-reserve"></label></div>
+  <div><label>我的休息日（全天） <input id="r-restday"></label><label>我的工作日（全天） <input id="r-workday"></label></div>
+  <h2 style="margin-top:12px">公开项</h2>
+  <small>写成「词-名字」只公开名字（漫展-ijoy → ijoy）。填了「地点」的，那天你就在那个城市，同城的人可以约你见面。谁能看到，在分享码清单里按人勾选。</small>
+  <div id="semi"></div><button type="button" class="ghost small" id="semi-add">＋ 加一种公开项</button>
+</section>
+
+<section>
+  <h2>活动</h2>
+  <small>别人能约你做什么。每个活动有自己的时段：休息日、工作日分别填，不开放就空着（勾「不选时段」的活动，只要勾上日子类型就行）。「同城」表示只有那天和你在同一个城市的人才能约。</small>
+  <div id="acts"></div><button type="button" class="ghost small" id="act-add">＋ 加一个活动</button>
+</section>
+
+<section>
+  <h2>给长辈看的概括</h2>
+  <small>勾了「只看概括」的人，看不到任何细节，只看到这里的文字。左边是标记词，右边是他们看到的话。</small>
+  <div id="sums"></div>
+</section>
+
+<section>
+  <h2>页面文字</h2>
+  <small>日历格子只用符号：♡ 可约、💬 可以商量、— 不开放。想在图例里加字就填，留空就只有符号。</small>
+  <label>♡ <input id="t-open" placeholder="空着"></label><label>💬 <input id="t-ask" placeholder="空着"></label><label>— <input id="t-none" placeholder="空着"></label>
+  <div><label class="grow">标题下的一句话 <input id="t-hint" size="30"></label></div>
+</section>
+
+<section>
+  <h2>保护电量</h2>
+  <label>休息日活动前后留出 <input id="buffer" type="number" min="0" max="240" step="15" value="60"> 分钟</label>
+  <label>每周最多约 <input id="weekly-max" type="number" min="0" max="14" value="3"> 次（0 = 不限）</label>
+  <div><label>全天公开项（比如全天漫展）那天的见面时段 <input id="conv-start" type="time" value="12:00"> 至 <input id="conv-end" type="time" value="16:00"></label></div>
+  <small>结束时间选 00:00 表示到半夜。有具体时间的漫展按事件本身的时间。</small>
+</section>
+
+<section id="people">
+  <h2>分享码清单</h2>
+  <small>清单原件放在你电脑上（建议 iCloud 云盘里的 <code>myslot-codes.json</code>）。每次：打开清单 → 增删改 → 保存清单 → 复制给 Secret。分享码用微信单独发，不要和网址放在一起。</small>
+  <div class="bar"><label class="ghost">打开清单 <input id="l-open" type="file" accept=".json,application/json"></label>
+  <button type="button" id="l-save">保存清单</button><button type="button" id="l-copy">复制给 Secret</button><button type="button" class="ghost" id="l-clean">清理已过期</button></div>
+  <p id="l-status" class="status">还没有打开清单。第一次使用可以直接开始添加。</p>
+  <div class="table-wrap"><table id="l-table"><thead><tr><th>代号</th><th>城市</th><th>能看到</th><th>能约</th><th>称呼</th><th>有效期</th><th>备注</th><th></th></tr></thead><tbody></tbody></table></div>
+
+  <h2 id="p-title" style="margin-top:14px">添加一个人</h2>
+  <div class="row"><label>代号 <input id="p-label" placeholder="比如 星星"></label><label>城市 <input id="p-city" value="本地" list="cities" size="8"></label><datalist id="cities"><option value="本地"><option value="老家"></datalist>
+    <label><input type="checkbox" id="p-summary"> 只看概括（长辈）</label></div>
+  <div class="row"><span class="muted">能看到：</span><span id="p-see" class="checks"></span><label>具体名字 <input id="p-see-names" placeholder="比如 ijoy，看完就失效"></label></div>
+  <div class="row"><span class="muted">能约：</span><span id="p-acts" class="checks"></span></div>
+  <div class="row"><label>预留代号 <input id="p-reserve" placeholder="日历写 预留-xx 的 xx"></label><label>Ta 看到的称呼 <input id="p-name" placeholder="空着用默认称呼"></label></div>
+  <div class="row"><label><input type="checkbox" id="p-forever"> 永久</label><label>失效日期 <input type="date" id="p-until"></label><label class="grow">备注（只你看） <input id="p-note" style="width:100%"></label></div>
+  <div class="bar"><button type="button" id="p-save">生成并加入清单</button><button type="button" class="ghost" id="p-cancel" hidden>取消修改</button></div>
+  <pre id="p-out" hidden></pre>
+</section>
+
+<section>
+  <h2>主人码</h2>
+  <small>你自己用的码，打开后能看到所有人的总览，也能以任何人的身份预览。它能看到一切，所以要足够长。生成后存进 Secret <code>MYSLOT_OWNER_CODE</code>，只留在你自己手上。</small>
+  <div class="bar"><button type="button" id="owner-make">生成主人码</button></div>
+  <pre id="owner-out" hidden></pre>
+</section>
+</main>
+
 <script>
-(()=>{const $=id=>document.getElementById(id);
-const LEVEL={friend:'朋友',elder:'长辈',con:'圈内好友',close:'密友'};
-const norm=c=>c.normalize('NFKC').replace(/[‐-―−－ー]/g,'-').replace(/\s+/g,'').toLowerCase();
-const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
-let list=[],dirty=false,editing=null;
-function startEdit(i){const e=list[i];editing=i;$('c-who').value=e.code;$('c-who').disabled=true;$('c-level').value=e.level||'friend';$('c-also').value=[...(e.also||[]),...(e.home?['回老家']:[])].join(',');$('c-tags').value=(e.tags||[]).join(',');$('c-reserve').value=e.reserve||'';$('c-name').value=e.name||'';$('c-forever').checked=!!e.forever;$('c-until').value=e.until||'';$('c-until').disabled=!!e.forever;$('c-note').value=e.note||'';$('c-make').textContent='保存修改（分享码不变）';$('c-out').hidden=false;$('c-out').textContent=`正在修改「${e.code}」。改完点「保存修改」，再保存清单文件、复制给 Secret。对方用原来的码，下次同步后就会看到新的内容。`;$('c-who').scrollIntoView({behavior:'smooth',block:'center'})}
-const status=t=>$('l-status').textContent=t;
-const expired=e=>!e.forever&&e.until&&e.until<today();
-function setDirty(v){dirty=v;if(v)status(`清单有改动（${list.length} 个码），记得「保存清单文件」，再「复制给 Secret」。`)}
-function render(){const body=$('l-table').querySelector('tbody');body.replaceChildren();if(!list.length){const tr=document.createElement('tr');const td=document.createElement('td');td.colSpan=8;td.textContent='清单是空的';tr.append(td);body.append(tr);return}
- for(const [i,e] of list.entries()){const tr=document.createElement('tr');if(expired(e))tr.className='expired';
-  const extra=[...(e.tags||[]).map(v=>'#'+v),...(e.ordinary?['平常日子']:[]),...(e.also||[]),...(e.home?['回老家']:[]),...(e.reserve?['预留:'+e.reserve]:[]),...(e.see||[]).map(v=>'看:'+v)].join('、');
-  const cells=[e.code,(window.myslotLevels?.read()[e.level||'friend']?.name)||LEVEL[e.level||'friend']||e.level,extra,e.name||'',e.forever?'永久':e.until?(expired(e)?e.until+'（已过期）':'到 '+e.until):'不限',e.given||'',e.note||''];
-  for(const c of cells){const td=document.createElement('td');td.textContent=c;tr.append(td)}
-  const td=document.createElement('td');const edit=document.createElement('button');edit.type='button';edit.textContent='修改';edit.onclick=()=>startEdit(i);td.append(edit,' ');const del=document.createElement('button');del.type='button';del.textContent='收回';del.onclick=()=>{if(confirm(`收回「${e.code}」？保存并更新 Secret 后，这个码就打不开了。`)){list.splice(i,1);setDirty(true);render()}};td.append(del);tr.append(td);body.append(tr)}}
-function load(data,source){if(!Array.isArray(data))throw Error('最外层需要是方括号 [ ]');for(const e of data)if(!e||typeof e.code!=='string')throw Error('有一项缺少 code');list=data;dirty=false;render();status(`已载入${source}：${list.length} 个码${list.some(expired)?'，其中有已过期的，可以「清理已过期」':''}。`)}
-$('l-open').onchange=async ev=>{const f=ev.target.files[0];if(!f)return;try{load(JSON.parse(await f.text()),'「'+f.name+'」')}catch(err){status('打不开这个文件：'+err.message)}ev.target.value=''};
-$('k-load').onclick=()=>{try{load(JSON.parse($('k-list').value),'粘贴的内容')}catch(err){status('格式有误：'+err.message+'。常见原因：中文引号或逗号、最后一项后面多了逗号。')}};
-$('l-save').onclick=()=>{const blob=new Blob([JSON.stringify(list,null,2)+'\n'],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='myslot-codes.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),30000);dirty=false;status('已下载 myslot-codes.json。用它替换掉原来那个文件（比如 iCloud 云盘里的），然后「复制给 Secret」。')};
-$('l-copy').onclick=async()=>{const secret=JSON.stringify(list.filter(e=>!expired(e)).map(({note,given,...rest})=>rest));try{await navigator.clipboard.writeText(secret);status('已复制。到 GitHub 打开 Secret MYSLOT_SHARE_CODES → Update → 全部替换成刚复制的内容 → 运行一次 Actions。（备注和发放日期不会放进 Secret。）')}catch{$('k-list').value=secret;$('k-list').closest('details').open=true;status('浏览器不让自动复制，内容已放进下面的框里，请手动全选复制。')}};
-$('l-clean').onclick=()=>{const before=list.length;list=list.filter(e=>!expired(e));const n=before-list.length;render();if(n)setDirty(true);else status('没有过期的码。')};
-$('c-forever').onchange=()=>{$('c-until').disabled=$('c-forever').checked;if($('c-forever').checked)$('c-until').value=''};
-$('c-make').onclick=()=>{const who=$('c-who').value.trim();if(!who){$('c-out').hidden=false;$('c-out').textContent='先填对方代号。';return}
- let code;if(editing!==null)code=list[editing].code;else do{const n=new Uint32Array(1);crypto.getRandomValues(n);code=`${who}-${String(n[0]%1e6).padStart(6,'0')}`}while(list.some(e=>norm(e.code)===norm(code)));
- const entry={code,level:$('c-level').value};const also=$('c-also').value.split(/[,，、]/).map(v=>v.trim()).filter(Boolean);if(also.length)entry.also=also;const tags=$('c-tags').value.split(/[,，、]/).map(v=>v.trim()).filter(Boolean);if(tags.length)entry.tags=tags;
- if($('c-reserve').value.trim())entry.reserve=$('c-reserve').value.trim();if($('c-ord').checked)entry.ordinary=true;if($('c-name').value.trim())entry.name=$('c-name').value.trim();
- if($('c-forever').checked)entry.forever=true;else if($('c-until').value)entry.until=$('c-until').value;
- entry.given=editing!==null?(list[editing].given||today()):today();if($('c-note').value.trim())entry.note=$('c-note').value.trim();
- const wasEditing=editing!==null;if(wasEditing){list[editing]=entry;editing=null;$('c-who').disabled=false;$('c-make').textContent='生成并加入清单'}else list.push(entry);render();setDirty(true);for(const id of ['c-who','c-also','c-tags','c-reserve','c-name','c-note','c-until'])$(id).value='';$('c-forever').checked=false;$('c-ord').checked=false;$('c-until').disabled=false;
- $('c-out').hidden=false;$('c-out').textContent=wasEditing?`已修改「${code}」。分享码没变，不用重新发给对方。`:`发给 ${who} 的分享码：${code}\n（整串都要发，包括前面的代号）`};
-$('k-run').onclick=()=>{const out=$('k-out');out.hidden=false;const hit=list.find(e=>norm(e.code)===norm($('k-code').value));out.textContent=!list.length?'先打开或粘贴清单。':hit?(expired(hit)?`找到了，但已在 ${hit.until} 过期。`:`✓ 找到了（${LEVEL[hit.level||'friend']}）。如果网页还是打不开，重新「复制给 Secret」并运行 Actions，等 10 分钟。`):'✗ 清单里没有这个码。'};
-addEventListener('beforeunload',ev=>{if(dirty){ev.preventDefault();ev.returnValue=''}});
-render();})();
-</script>
-<style>.codes{margin-top:28px}.codes .row{display:flex;flex-wrap:wrap;gap:10px;margin:8px 0;align-items:center}.codes pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f3f3;padding:12px;border-radius:10px}.table-wrap{overflow-x:auto;margin:10px 0}#l-table{border-collapse:collapse;width:100%;font-size:13px}#l-table th,#l-table td{border-bottom:1px solid #eee4e2;padding:6px 8px;text-align:left;white-space:nowrap}#l-table tr.expired td{color:#b0a6aa;text-decoration:line-through}#l-table tr.expired td:last-child{text-decoration:none}.filebtn{display:inline-block;border:1px solid #e3d6d4;border-radius:10px;padding:6px 12px;cursor:pointer;background:#fff}.filebtn input{display:none}.status-line{font-size:13px;color:#8a5f68;background:#fbf3f2;padding:8px 12px;border-radius:10px}.codes details{margin-top:18px}</style><p class="hint">在选中的日历写 <code>【漫展-ijoy】</code>，页面只显示 ijoy；写 <code>【休息】</code>、<code>【cos】</code> 或 <code>【拍照】</code> 会整天关闭，朋友看不到原因。同一天有休息和漫展时，以休息为准。</p><p><small>下载 config.json 并上传到 GitHub 仓库根目录，提交后重新运行 Actions。iCloud、Google、飞书的日历选择分别填写到对应 Secret；不能把密码放进公开配置。</small></p></main>
-<script>
-const $=id=>document.getElementById(id),labels=['一','二','三','四','五','六','日'];let existing={};
-const chosenSources=()=>[...document.querySelectorAll('[name=source]:checked')].map(x=>x.value);
-labels.forEach((name,i)=>{const l=document.createElement('label'),c=document.createElement('input');c.type='checkbox';c.name='weekday';c.value=i+1;c.checked=i<5;l.append(c,document.createTextNode('周'+name));$('weekly').append(l)});
-$('mode').onchange=()=>{$('weekly').hidden=$('mode').value!=='weekly';$('cycle').hidden=$('mode').value!=='cycle'};
-$('existing').onchange=async e=>{try{const cfg=JSON.parse(await e.target.files[0].text());for(const kind of ['workday','restday','convention'])if(cfg.windows[kind]?.length!==1)throw Error('目前每类时段只支持一段连续时间');existing=cfg;for(const box of document.querySelectorAll('[name=source]'))box.checked=(cfg.calendarSources||['icloud']).includes(box.value);$('owner').value=cfg.owner;$('timezone').value=cfg.timeZone;$('mode').value=cfg.schedule?.mode||'weekly';$('mode').onchange();$('anchor').value=cfg.schedule?.anchor||'2026-09-21';$('workDays').value=cfg.schedule?.workDays||4;$('restDays').value=cfg.schedule?.restDays||2;$('holiday').checked=cfg.schedule?.holidaysOverride!==false;for(const box of document.querySelectorAll('[name=weekday]'))box.checked=(cfg.schedule?.workdaysIso||cfg.workdaysIso||[]).includes(+box.value);for(const [form,key] of [['work','workday'],['rest','restday'],['event','convention']]){$(form+'Start').value=cfg.windows[key][0][0];$(form+'End').value=cfg.windows[key][0][1]}for(const [field,key,fallback] of [['workLead','workday',4],['restLead','restday',24],['eventLead','convention',24]])$(field).value=cfg.leadHours?.[key]??fallback;$('cosLead').value=cfg.cosLeadDays??30;window.myslotRules.load(cfg.rules);window.myslotLevels.load(cfg.levels);window.myslotProjects.load(cfg.projects);$('buffer').value=cfg.bufferMinutes??60;$('weekly').value=cfg.weeklyMax??3;$('result').textContent='已载入原配置'}catch(error){$('result').textContent='无法载入：'+error.message}};
-$('form').onsubmit=e=>{e.preventDefault();const windowOf=name=>[$(name+'Start').value,$(name+'End').value],windows={workday:[windowOf('work')],restday:[windowOf('rest')],convention:[windowOf('event')]};if(Object.values(windows).some(list=>!list[0][0]||!list[0][1]||list[0][0]>=list[0][1])){$('result').textContent='请检查开始、结束时间';return}const schedule={mode:$('mode').value,workdaysIso:[...document.querySelectorAll('[name=weekday]:checked')].map(x=>+x.value),anchor:$('anchor').value,workDays:+$('workDays').value,restDays:+$('restDays').value,holidaysOverride:$('holiday').checked};if(schedule.mode==='cycle'&&(!schedule.anchor||schedule.workDays<1||schedule.restDays<1)){$('result').textContent='请填写轮班起点和周期';return}if(!chosenSources().length){$('result').textContent='至少选择一个日历来源';return}const cfg={...existing,owner:$('owner').value,timeZone:$('timezone').value,calendarSources:chosenSources(),schedule,windows,stepMinutes:existing.stepMinutes||30,leadHours:{workday:+$('workLead').value,restday:+$('restLead').value,convention:+$('eventLead').value},cosLeadDays:+$('cosLead').value,daysAhead:existing.daysAhead||90,bufferMinutes:$('buffer').value===''?60:Math.max(0,+$('buffer').value),weeklyMax:$('weekly').value===''?3:Math.max(0,Math.round(+$('weekly').value)),rules:window.myslotRules.read(),levels:window.myslotLevels.read(),projects:(()=>{try{return window.myslotProjects.read()}catch(err){$('result').textContent=err.message;throw err}})()};const link=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(cfg,null,2)+'\n'],{type:'application/json'}));link.href=url;link.download='config.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);$('result').textContent='已生成。建议把文件内容整段粘贴进 Secret MYSLOT_CONFIG_JSON（不公开）；也可以上传到仓库根目录替换 config.json'};
-</script></html>
-<script>
-(()=>{const $=id=>document.getElementById(id);const LEVELS=[['elder','长辈'],['friend','朋友'],['con','圈内好友'],['close','密友']];
-const DEFAULT=[{word:'漫展',seenBy:['con','close'],others:'event'},{word:'回老家',seenBy:['elder','close'],others:'busy'}];
-function row(rule){const div=document.createElement('div');div.className='semi-row';div.innerHTML='<input class="s-word" placeholder="词，比如 漫展"> <span>谁能看到名字：</span>'+LEVELS.map(([k,n])=>`<label><input type="checkbox" value="${k}">${n}</label>`).join('')+' <span>其他人看到：</span><select class="s-others"><option value="event">有安排，可以约吃饭</option><option value="busy">不可用</option></select> <button type="button" class="s-del">删除</button>';div.querySelector('.s-word').value=rule.word||'';for(const box of div.querySelectorAll('input[type=checkbox]'))box.checked=(rule.seenBy||[]).includes(box.value);div.querySelector('.s-others').value=rule.others||'event';div.querySelector('.s-del').onclick=()=>div.remove();$('r-semi').append(div)}
-window.myslotRules={load(rules){rules=rules||{};$('r-busy').value=(rules.busy||['聚会','拍照','cos','【休息】']).join(',');$('r-booked').value=(rules.booked||['已约']).join(',');$('r-reserve').value=(rules.reserve||['预留']).join(',');$('r-restday').value=(rules.restday||['调休']).join(',');$('r-workday').value=(rules.workday||['补班']).join(',');$('r-semi').replaceChildren();for(const r of rules.semi||DEFAULT)row(r)},
-read(){const list=id=>$(id).value.split(/[,，]/).map(v=>v.trim()).filter(Boolean);return{busy:list('r-busy'),booked:list('r-booked'),reserve:list('r-reserve'),restday:list('r-restday'),workday:list('r-workday'),semi:[...document.querySelectorAll('#r-semi .semi-row')].map(d=>({word:d.querySelector('.s-word').value.trim(),seenBy:[...d.querySelectorAll('input[type=checkbox]:checked')].map(b=>b.value),others:d.querySelector('.s-others').value})).filter(r=>r.word)}}};
-$('r-add').onclick=()=>row({});window.myslotRules.load();})();
-</script>
-<style>.semi-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0;padding:8px;background:#faf6f6;border-radius:10px}.semi-row .s-word{width:110px}</style>
-<script>
-(()=>{const $=id=>document.getElementById(id);const KEYS=['friend','elder','con','close'];
-const DEF={friend:{name:'朋友',ordinary:true,simple:false},elder:{name:'长辈',ordinary:true,simple:true},con:{name:'圈内好友',ordinary:false,simple:false},close:{name:'密友',ordinary:true,simple:false}};
-window.myslotLevels={load(levels){levels=levels||{};$('lv').replaceChildren();for(const k of KEYS){const v={...DEF[k],...(levels[k]||{})};const row=document.createElement('div');row.className='semi-row lv-row';row.dataset.key=k;row.innerHTML='<input class="lv-name" style="width:110px"> <label><input type="checkbox" class="lv-ord"> 没亮的日子显示「可以商量」</label> <label><input type="checkbox" class="lv-simple"> 只看空闲 / 上班 / 有安排</label>';row.querySelector('.lv-name').value=v.name;row.querySelector('.lv-ord').checked=v.ordinary;row.querySelector('.lv-simple').checked=v.simple;row.querySelector('.lv-name').oninput=()=>window.myslotLevels.sync();$('lv').append(row)}this.sync()},
-read(){const out={};for(const row of document.querySelectorAll('#lv [data-key]'))out[row.dataset.key]={name:row.querySelector('.lv-name').value.trim()||DEF[row.dataset.key].name,ordinary:row.querySelector('.lv-ord').checked,simple:row.querySelector('.lv-simple').checked};return out},
-sync(){const names=this.read();for(const o of document.querySelectorAll('#c-level option'))o.textContent=names[o.value]?.name||o.textContent;for(const l of document.querySelectorAll('#r-semi input[type=checkbox][value]')){const n=names[l.value];if(n)l.nextSibling.textContent=n.name}}};
-window.myslotLevels.load();})();
-</script>
-<script>
-(()=>{const $=id=>document.getElementById(id);const LV=[['friend','朋友'],['elder','长辈'],['con','圈内好友'],['close','密友']];
+(()=>{'use strict';
+const $=id=>document.getElementById(id);
+const split=v=>v.split(/[,，、]/).map(s=>s.trim()).filter(Boolean);
 const RANGE=/^\d{1,2}:\d{2}\s*[-–~～至到]\s*\d{1,2}:\d{2}$/;
-const DEF=[{project:'吃饭',levels:['friend'],rest:['14:00-18:00'],leadHours:24},{project:'吃饭',tags:['住得近'],work:['18:30-20:00'],leadHours:2},{project:'逛街',levels:['friend'],rest:['14:00-18:00'],leadHours:24},{project:'拍照',levels:['con'],rest:['14:00-18:00'],leadHours:24},{project:'cos',levels:['con','close'],rest:[],work:[],slot:false,leadHours:720},{project:'旅行',levels:['close'],rest:[],slot:false,leadHours:336},{project:'吃饭',levels:['close'],rest:['10:00-21:00'],work:['18:30-21:00'],leadHours:2},{project:'逛街',levels:['close'],rest:['10:00-21:00'],work:['18:30-21:00'],leadHours:2},{project:'拍照',levels:['close'],rest:['10:00-21:00'],work:['18:30-21:00'],leadHours:2}];
-function row(r){const d=document.createElement('div');d.className='semi-row pj-row';const names=window.myslotLevels?.read()||{};
- d.innerHTML='<input class="pj-name" placeholder="项目，如 吃饭" style="width:90px"> <span>谁：</span>'+LV.map(([k,n])=>`<label><input type="checkbox" class="pj-lv" value="${k}">${names[k]?.name||n}</label>`).join('')+' <input class="pj-tags" placeholder="或标签，如 住得近" style="width:120px"><br><label><input type="checkbox" class="pj-rest-on"> 休息日</label> <input class="pj-rest" placeholder="14:00-18:00" style="width:120px"> <label><input type="checkbox" class="pj-work-on"> 工作日</label> <input class="pj-work" placeholder="18:30-20:00" style="width:120px"><br><label><input type="checkbox" class="pj-noslot"> 不选时段，直接商量</label> <span>提前</span> <input class="pj-lead" type="number" min="0" style="width:60px"> <select class="pj-unit"><option value="1">小时</option><option value="24">天</option></select> <button type="button" class="pj-del">删除</button>';
- const q=c=>d.querySelector(c);q('.pj-name').value=r.project||'';for(const b of d.querySelectorAll('.pj-lv'))b.checked=(r.levels||[]).includes(b.value);q('.pj-tags').value=(r.tags||[]).join(',');
- q('.pj-rest-on').checked='rest' in r;q('.pj-rest').value=(r.rest||[]).join(',');q('.pj-work-on').checked='work' in r;q('.pj-work').value=(r.work||[]).join(',');q('.pj-noslot').checked=r.slot===false;
- const lead=r.leadHours??24;if(lead>=48&&lead%24===0){q('.pj-lead').value=lead/24;q('.pj-unit').value='24'}else{q('.pj-lead').value=lead;q('.pj-unit').value='1'}
- q('.pj-del').onclick=()=>d.remove();$('pj').append(d)}
-window.myslotProjects={load(list){$('pj').replaceChildren();for(const r of list||DEF)row(r)},
- read(){const out=[];for(const d of document.querySelectorAll('.pj-row')){const q=c=>d.querySelector(c);const name=q('.pj-name').value.trim();if(!name)continue;const split=v=>v.split(/[,，、]/).map(s=>s.trim()).filter(Boolean);
-  const r={project:name};const lv=[...d.querySelectorAll('.pj-lv:checked')].map(b=>b.value);if(lv.length)r.levels=lv;const tags=split(q('.pj-tags').value);if(tags.length)r.tags=tags;
-  const noslot=q('.pj-noslot').checked;for(const [on,field,input] of [['.pj-rest-on','rest','.pj-rest'],['.pj-work-on','work','.pj-work']])if(q(on).checked){const ranges=noslot?[]:split(q(input).value);for(const x of ranges)if(!RANGE.test(x))throw Error(`「${name}」的时段「${x}」格式不对，要写成 14:00-18:00`);if(!noslot&&!ranges.length)throw Error(`「${name}」勾了${field==='rest'?'休息日':'工作日'}，但没填时段`);r[field]=ranges}
-  if(!('rest' in r)&&!('work' in r))throw Error(`「${name}」至少要勾休息日或工作日`);if(!r.levels&&!r.tags)throw Error(`「${name}」要选谁能约`);if(noslot)r.slot=false;r.leadHours=(+q('.pj-lead').value||0)*(+q('.pj-unit').value);out.push(r)}return out}};
-$('pj-add').onclick=()=>row({project:'',rest:[]});window.myslotProjects.load();})();
+const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function randomCode(n){const abc='abcdefghjkmnpqrstuvwxyz23456789',v=new Uint32Array(n);crypto.getRandomValues(v);return [...v].map(x=>abc[x%abc.length]).join('')}
+
+// ---------------- defaults ----------------
+const D={rules:{busy:['聚会','拍照','cos','【休息】'],booked:['已约'],rest:['躺平'],reserve:['预留'],restday:['调休'],workday:['补班'],semi:[{word:'漫展'},{word:'回老家',location:'老家'}]},
+ activities:[{name:'吃饭',rest:['14:00-18:00'],leadHours:24,sameCity:true},{name:'吃饭（工作日）',work:['18:30-20:00'],leadHours:2,sameCity:true},{name:'逛街',rest:['14:00-18:00'],leadHours:24,sameCity:true},{name:'拍照',rest:['14:00-18:00'],leadHours:24,sameCity:true},{name:'cos（已有衣服）',rest:[],slot:false,leadHours:72,sameCity:true},{name:'cos（新衣服）',rest:[],slot:false,leadHours:336,sameCity:true},{name:'问问我',rest:[],work:[],slot:false,leadHours:0,message:'{owner}，{date}有空吗？想找你～'}],
+ summaries:{'漫展':'出去玩','回老家':'在家','拍照':'出去拍照','cos':'出去拍照','聚会':'出去玩','上班':'上班','空闲':'空闲','其他':'有安排'},
+ texts:{open:'',ask:'',none:'',hint:'以我回复确认为准'}};
+let base={};
+
+// ---------------- schedule ----------------
+const WEEK=['一','二','三','四','五','六','日'];
+$('mode-weekly').innerHTML=WEEK.map((w,i)=>`<label><input type="checkbox" name="weekday" value="${i+1}"${i<5?' checked':''}>周${w}</label>`).join('');
+$('mode').onchange=()=>{$('mode-weekly').hidden=$('mode').value!=='weekly';$('mode-cycle').hidden=$('mode').value!=='cycle'};
+
+// ---------------- 公开项 ----------------
+function semiRow(r){const d=document.createElement('div');d.className='row semi-row';d.innerHTML=`<label>词 <input class="s-word" value="${esc(r.word||'')}" size="8"></label><label>地点 <input class="s-loc" value="${esc(r.location||'')}" placeholder="不换城市就空着" size="12"></label><button type="button" class="ghost small">删除</button>`;d.querySelector('button').onclick=()=>{d.remove();refreshChoices()};d.querySelector('.s-word').oninput=refreshChoices;$('semi').append(d)}
+$('semi-add').onclick=()=>{semiRow({});refreshChoices()};
+const readSemi=()=>[...document.querySelectorAll('.semi-row')].map(d=>{const r={word:d.querySelector('.s-word').value.trim()};const loc=d.querySelector('.s-loc').value.trim();if(loc)r.location=loc;return r}).filter(r=>r.word);
+
+// ---------------- 活动 ----------------
+function actRow(a){const d=document.createElement('div');d.className='row act-row';const lead=a.leadHours??24,days=lead>=48&&lead%24===0;
+ d.innerHTML=`<label>名称 <input class="a-name" value="${esc(a.name||'')}" size="10"></label>
+ <label><input type="checkbox" class="a-rest-on"${'rest' in a?' checked':''}>休息日</label><input class="a-rest" value="${esc((a.rest||[]).join(','))}" placeholder="14:00-18:00" size="14">
+ <label><input type="checkbox" class="a-work-on"${'work' in a?' checked':''}>工作日</label><input class="a-work" value="${esc((a.work||[]).join(','))}" placeholder="18:30-20:00" size="14">
+ <label>提前 <input type="number" class="a-lead" min="0" value="${days?lead/24:lead}"><select class="a-unit"><option value="1"${days?'':' selected'}>小时</option><option value="24"${days?' selected':''}>天</option></select></label>
+ <label><input type="checkbox" class="a-noslot"${a.slot===false?' checked':''}>不选时段</label><label><input type="checkbox" class="a-city"${a.sameCity?' checked':''}>同城</label>
+ <label class="grow">消息（可空） <input class="a-msg" value="${esc(a.message||'')}" placeholder="{owner}、{date}、{time}、{activity} 会被替换" style="width:100%"></label>
+ <button type="button" class="ghost small">删除</button>`;
+ d.querySelector('button').onclick=()=>{d.remove();refreshChoices()};d.querySelector('.a-name').oninput=refreshChoices;$('acts').append(d)}
+$('act-add').onclick=()=>{actRow({rest:[]});refreshChoices()};
+function readActs(){const out=[],names=new Set();for(const d of document.querySelectorAll('.act-row')){const q=c=>d.querySelector(c);const name=q('.a-name').value.trim();if(!name)continue;
+  if(names.has(name))throw Error(`活动「${name}」重复了`);names.add(name);const a={name};const noslot=q('.a-noslot').checked;
+  for(const [on,field,input,label] of [['.a-rest-on','rest','.a-rest','休息日'],['.a-work-on','work','.a-work','工作日']])if(q(on).checked){const ranges=noslot?[]:split(q(input).value);for(const x of ranges)if(!RANGE.test(x))throw Error(`活动「${name}」的${label}时段「${x}」格式不对，要写成 14:00-18:00`);if(!noslot&&!ranges.length)throw Error(`活动「${name}」勾了${label}，但没填时段`);a[field]=ranges}
+  if(!('rest' in a)&&!('work' in a))throw Error(`活动「${name}」至少要勾休息日或工作日`);
+  if(noslot)a.slot=false;if(q('.a-city').checked)a.sameCity=true;a.leadHours=Math.max(0,+q('.a-lead').value||0)*(+q('.a-unit').value);const msg=q('.a-msg').value.trim();if(msg)a.message=msg;out.push(a)}return out}
+
+// ---------------- 概括 ----------------
+function drawSums(sums){$('sums').innerHTML=Object.entries(sums).map(([k,v])=>`<label><span class="muted">${esc(k)}</span> → <input class="sum" data-key="${esc(k)}" value="${esc(v)}" size="8"></label>`).join('')}
+const readSums=()=>Object.fromEntries([...document.querySelectorAll('.sum')].map(i=>[i.dataset.key,i.value.trim()]));
+
+// ---------------- load / save config ----------------
+function loadConfig(c){base=c||{};const r={...D.rules,...(c.rules||{})};
+ $('owner').value=c.owner||'Jan';$('timezone').value=c.timeZone||'Asia/Shanghai';
+ for(const b of document.querySelectorAll('[name=source]'))b.checked=(c.calendarSources||['icloud']).includes(b.value);
+ const s=c.schedule||{};$('mode').value=s.mode||'weekly';$('mode').onchange();for(const b of document.querySelectorAll('[name=weekday]'))b.checked=(s.workdaysIso||[1,2,3,4,5]).includes(+b.value);
+ $('anchor').value=s.anchor||'2026-09-21';$('workDays').value=s.workDays||4;$('restDays').value=s.restDays||2;$('holiday').checked=s.holidaysOverride!==false;
+ for(const k of ['busy','booked','rest','reserve','restday','workday'])$('r-'+k).value=(r[k]||[]).join(',');
+ $('semi').replaceChildren();for(const x of r.semi||[])semiRow(x);
+ const acts=Array.isArray(c.activities)&&c.activities.length&&c.activities.every(a=>'rest' in a||'work' in a)?c.activities:D.activities;
+ $('acts').replaceChildren();for(const a of acts)actRow(a);
+ const sums={...D.summaries,...(c.summaries||{})};drawSums(sums);
+ const t={...D.texts,...(c.texts||{})};$('t-open').value=t.open;$('t-ask').value=t.ask;$('t-none').value=t.none;$('t-hint').value=t.hint;
+ $('buffer').value=c.bufferMinutes??60;$('weekly-max').value=c.weeklyMax??3;
+ const conv=(c.windows&&c.windows.convention&&c.windows.convention[0])||['12:00','16:00'];$('conv-start').value=conv[0];$('conv-end').value=conv[1];
+ refreshChoices()}
+function buildConfig(){const rules={};for(const k of ['busy','booked','rest','reserve','restday','workday']){rules[k]=split($('r-'+k).value);if(!rules[k].length)throw Error('「日历里怎么标」里每一项至少要有一个词')}
+ rules.semi=readSemi();const cs=$('conv-start').value,ce=$('conv-end').value;if(!cs||!ce||(ce!=='00:00'&&cs>=ce))throw Error('全天公开项的见面时段：结束要晚于开始');
+ const num=(id,def)=>$(id).value===''?def:Math.max(0,Math.round(+$(id).value));
+ const schedule={mode:$('mode').value,workdaysIso:[...document.querySelectorAll('[name=weekday]:checked')].map(b=>+b.value),anchor:$('anchor').value,workDays:num('workDays',4),restDays:num('restDays',2),holidaysOverride:$('holiday').checked};
+ if(schedule.mode==='cycle'&&(!schedule.anchor||schedule.workDays<1||schedule.restDays<1))throw Error('请填写轮班起点和天数');
+ const sources=[...document.querySelectorAll('[name=source]:checked')].map(b=>b.value);if(!sources.length)throw Error('至少选择一个日历账户');
+ const w=base.windows||{};
+ return {...base,owner:$('owner').value.trim()||'Jan',timeZone:$('timezone').value.trim()||'Asia/Shanghai',calendarSources:sources,schedule,
+  windows:{workday:w.workday||[['18:30','19:00']],restday:w.restday||[['12:00','16:00']],convention:[[cs,ce]]},
+  stepMinutes:base.stepMinutes||30,daysAhead:base.daysAhead||90,bufferMinutes:num('buffer',60),weeklyMax:num('weekly-max',3),
+  rules,activities:readActs(),summaries:readSums(),texts:{open:$('t-open').value.trim(),ask:$('t-ask').value.trim(),none:$('t-none').value.trim(),hint:$('t-hint').value.trim()},
+  levels:undefined,openTimes:undefined,projects:undefined}}
+function cfgStatus(text,err){const p=$('cfg-status');p.hidden=false;p.textContent=text;p.classList.toggle('err',!!err)}
+$('cfg-file').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{loadConfig(JSON.parse(await f.text()));cfgStatus('已载入「'+f.name+'」')}catch(err){cfgStatus('打不开这个文件：'+err.message,true)}e.target.value=''};
+$('cfg-save').onclick=()=>{let cfg;try{cfg=buildConfig()}catch(err){cfgStatus(err.message,true);return}
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(cfg,null,2)+'\n'],{type:'application/json'}));a.download='config.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),30000);
+ cfgStatus('已下载 config.json。把它的全部内容粘贴进 Secret MYSLOT_CONFIG_JSON，再运行一次 Actions。')};
+
+// ---------------- people ----------------
+let list=[],dirty=false,editing=null;
+const expired=e=>!e.forever&&e.until&&e.until<today();
+const status=(t,err)=>{$('l-status').textContent=t;$('l-status').classList.toggle('err',!!err)};
+const setDirty=()=>{dirty=true;status(`清单有改动（${list.length} 人）。记得「保存清单」，再「复制给 Secret」。`)};
+// Old entries used levels; show them in the new shape.
+function asPerson(e){if(e.activities||e.summary||e.city)return {city:e.city||'本地',see:e.see||[],activities:e.activities||[],summary:!!e.summary};
+ const acts={friend:['吃饭','逛街'],con:['拍照','cos（已有衣服）','cos（新衣服）'],close:readActNames(),elder:[]}[e.level||'friend']||[];
+ const see=[...(e.see||[]),...(e.also||[]),...(e.home?['回老家']:[]),...(e.level==='con'?['漫展']:e.level==='close'?readSemi().map(s=>s.word):[])];
+ return {city:'本地',see:[...new Set(see)],activities:[...acts,...((e.tags||[]).includes('住得近')?['吃饭（工作日）']:[])],summary:e.level==='elder'}}
+const labelOf=e=>e.label||e.code.split('-')[0];
+function readActNames(){return [...document.querySelectorAll('.act-row .a-name')].map(i=>i.value.trim()).filter(Boolean)}
+function refreshChoices(){const keep=(id)=>new Set([...document.querySelectorAll(`#${id} input:checked`)].map(b=>b.value));
+ const seen=keep('p-see'),acts=keep('p-acts');
+ $('p-see').innerHTML=readSemi().map(s=>`<label><input type="checkbox" value="${esc(s.word)}"${seen.has(s.word)?' checked':''}>${esc(s.word)}</label>`).join('');
+ $('p-acts').innerHTML=readActNames().map(n=>`<label><input type="checkbox" value="${esc(n)}"${acts.has(n)?' checked':''}>${esc(n)}</label>`).join('')}
+function render(){const body=$('l-table').querySelector('tbody');body.replaceChildren();
+ if(!list.length){body.innerHTML='<tr><td colspan="8" class="muted">清单是空的</td></tr>';return}
+ list.forEach((e,i)=>{const p=asPerson(e),tr=document.createElement('tr');if(expired(e))tr.className='expired';
+  const cells=[labelOf(e),p.summary?'—':p.city,p.summary?'概括':p.see.join('、'),p.summary?'—':p.activities.join('、'),e.name||'',e.forever?'永久':e.until?(expired(e)?e.until+'（已过期）':'到 '+e.until):'不限',e.note||''];
+  for(const c of cells){const td=document.createElement('td');td.textContent=c;tr.append(td)}
+  const td=document.createElement('td');
+  const edit=document.createElement('button');edit.type='button';edit.className='ghost small';edit.textContent='修改';edit.onclick=()=>startEdit(i);
+  const del=document.createElement('button');del.type='button';del.className='ghost small';del.textContent='收回';
+  del.onclick=()=>{if(del.dataset.sure){list.splice(i,1);setDirty();render()}else{del.dataset.sure='1';del.textContent='确定收回？';setTimeout(()=>{delete del.dataset.sure;del.textContent='收回'},3000)}};
+  td.append(edit,' ',del);tr.append(td);body.append(tr)})}
+function fillForm(e){const p=e?asPerson(e):{city:'本地',see:[],activities:[],summary:false};refreshChoices();
+ $('p-label').value=e?labelOf(e):'';$('p-city').value=p.city;$('p-summary').checked=p.summary;
+ const words=new Set(readSemi().map(s=>s.word));for(const b of document.querySelectorAll('#p-see input'))b.checked=p.see.includes(b.value);$('p-see-names').value=p.see.filter(x=>!words.has(x)).join(',');
+ for(const b of document.querySelectorAll('#p-acts input'))b.checked=p.activities.includes(b.value);
+ $('p-reserve').value=e?.reserve||'';$('p-name').value=e?.name||'';$('p-forever').checked=!!e?.forever;$('p-until').value=e?.until||'';$('p-until').disabled=!!e?.forever;$('p-note').value=e?.note||''}
+function startEdit(i){editing=i;fillForm(list[i]);$('p-title').textContent=`修改「${labelOf(list[i])}」（分享码不变）`;$('p-save').textContent='保存修改';$('p-cancel').hidden=false;$('p-out').hidden=true;$('p-title').scrollIntoView({behavior:'smooth',block:'start'})}
+function stopEdit(){editing=null;fillForm(null);$('p-title').textContent='添加一个人';$('p-save').textContent='生成并加入清单';$('p-cancel').hidden=true}
+$('p-cancel').onclick=stopEdit;$('p-forever').onchange=()=>{$('p-until').disabled=$('p-forever').checked;if($('p-forever').checked)$('p-until').value=''};
+$('p-save').onclick=()=>{const label=$('p-label').value.trim();const out=$('p-out');out.hidden=false;if(!label){out.textContent='先填代号。';return}
+ const summary=$('p-summary').checked;const e={label};
+ if(summary)e.summary=true;else{e.city=$('p-city').value.trim()||'本地';e.see=[...[...document.querySelectorAll('#p-see input:checked')].map(b=>b.value),...split($('p-see-names').value)];e.activities=[...document.querySelectorAll('#p-acts input:checked')].map(b=>b.value);if(!e.activities.length&&!e.see.length){out.textContent='至少勾一个「能看到」或「能约」。';return}}
+ if($('p-reserve').value.trim())e.reserve=$('p-reserve').value.trim();if($('p-name').value.trim())e.name=$('p-name').value.trim();
+ if($('p-forever').checked)e.forever=true;else if($('p-until').value)e.until=$('p-until').value;if($('p-note').value.trim())e.note=$('p-note').value.trim();
+ if(editing!==null){const old=list[editing];e.code=old.code;e.given=old.given||today();list[editing]=e;out.textContent=`已修改「${label}」。分享码没变，不用重新发。`;stopEdit()}
+ else{e.code=`${label}-${randomCode(10)}`;e.given=today();list.push(e);out.textContent=`发给 ${label} 的分享码：\n${e.code}\n（整串都要发。用微信单独发，不要和网址放在一起。）`;fillForm(null)}
+ setDirty();render()};
+function loadList(data,source){if(!Array.isArray(data))throw Error('最外层要是方括号 [ ]');for(const e of data)if(!e||typeof e.code!=='string')throw Error('有一项缺少 code');list=data;dirty=false;render();status(`已载入${source}：${list.length} 人${list.some(expired)?'，其中有已过期的，可以「清理已过期」':''}。`)}
+$('l-open').onchange=async ev=>{const f=ev.target.files[0];if(!f)return;try{loadList(JSON.parse(await f.text()),'「'+f.name+'」')}catch(err){status('打不开这个文件：'+err.message,true)}ev.target.value=''};
+$('l-save').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(list,null,2)+'\n'],{type:'application/json'}));a.download='myslot-codes.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),30000);dirty=false;status('已下载 myslot-codes.json，用它替换原来那份（比如 iCloud 云盘里的），然后「复制给 Secret」。')};
+$('l-copy').onclick=async()=>{const secret=JSON.stringify(list.filter(e=>!expired(e)).map(({note,given,...rest})=>rest));try{await navigator.clipboard.writeText(secret);status('已复制。到 GitHub 打开 Secret MYSLOT_SHARE_CODES → Update → 全部替换 → 运行一次 Actions。备注不会放进 Secret。')}catch{const out=$('p-out');out.hidden=false;out.textContent=secret;status('浏览器不让自动复制，内容放在下面了，请手动全选复制。',true)}};
+$('l-clean').onclick=()=>{const n=list.length;list=list.filter(e=>!expired(e));render();if(n!==list.length)setDirty();else status('没有过期的码。')};
+addEventListener('beforeunload',ev=>{if(dirty){ev.preventDefault();ev.returnValue=''}});
+
+// ---------------- owner code ----------------
+$('owner-make').onclick=()=>{const code=randomCode(24);const out=$('owner-out');out.hidden=false;out.textContent=`主人码：\n${code}\n\n存进 GitHub Secret「MYSLOT_OWNER_CODE」，自己记在密码管理器或上锁的备忘录里。不要发给任何人。`};
+
+loadConfig({});render();
+})();
 </script>
+</body>
+</html>

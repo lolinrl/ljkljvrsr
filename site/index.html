@@ -175,9 +175,13 @@ function drawCalendar(){const {y,m}=months[monthIndex],first=new Date(y,m-1,1),c
   $('month').textContent=`${m} 月`;$('month-small').textContent=`${y}`;$('prev').disabled=monthIndex===0;$('next').disabled=monthIndex===months.length-1;$('days').replaceChildren();
   for(let i=0;i<(first.getDay()+6)%7;i++)$('days').append(el('span','day blank'));
   for(let d=1;d<=count;d++){const key=`${y}-${pad(m)}-${pad(d)}`,r=data.days[key],past=key<today||!r,kind=past?'past':kindOf(data,key,filter);
-    const b=el('button',`day ${kind}${data.simple&&r?.label?' label':''}${key===selected?' selected':''}`);b.type='button';b.disabled=past;
+    // A shared item (漫展、回老家) always looks the same: ✦ + name; a small ♡ / 💬 says whether it can be booked.
+    const tagged=!past&&!data.simple&&r?.tag,look=tagged?'tag':kind;
+    const b=el('button',`day ${look}${data.simple&&r?.label?' label':''}${key===selected?' selected':''}`);b.type='button';b.disabled=past;
     const num=el('span','num',String(d));if(r?.festival)num.append(el('small',null,r.festival));b.append(num);
-    if(!past){const text=cellText(data,key,kind);b.append(el('span','sym',data.simple?(text||SYM[kind]):SYM[kind]));if(!data.simple&&text)b.append(el('span','name',text));}
+    if(!past){const text=cellText(data,key,kind);
+      if(tagged){b.append(el('span','sym','✦'));b.append(el('span','name',text+(kind==='open'?' ♡':kind==='ask'?' 💬':'')))}
+      else{b.append(el('span','sym',data.simple?(text||SYM[kind]):SYM[kind]));if(!data.simple&&text)b.append(el('span','name',text))}}
     b.setAttribute('aria-label',`${m}月${d}日 ${past?'已过去':cellText(data,key,kind)||({open:'可约',ask:'可以商量',tag:'',none:'不开放',work:'上班'}[kind]||'')}`);
     b.onclick=()=>{selected=key;pick=filter;start=end='';drawAll();if(innerWidth<760)$('detail').scrollIntoView({behavior:'smooth',block:'nearest'})};$('days').append(b)}}
 function timeField(parent,labelText,values,value,disabled,onChange){const label=el('label',null,labelText),select=el('select');select.disabled=disabled;select.append(new Option('请选择',''));for(const n of values)select.append(new Option(clock(n),clock(n)));select.value=value;select.onchange=()=>onChange(select.value);label.append(select);parent.append(label)}
@@ -229,7 +233,9 @@ function showOverview(){data=null;$('person').hidden=true;$('preview-note').hidd
     const tr=el('tr',r0.dayType==='restday'||[0,6].includes(d.getDay())?'rest':'');const th=el('th','d',`${d.getMonth()+1}/${d.getDate()}`);th.append(el('small',null,week[d.getDay()]+(r0.festival?' '+r0.festival:'')));tr.append(th);
     for(const p of people){const r=p.view.days[key];const td=el('td');if(!r){td.className='none';td.textContent='';tr.append(td);continue}
       const kind=kindOf(p.view,key);td.className=kind;const c=el('span','cell');
-      if(p.view.simple){c.append(el('b',null,SYM[kind]));c.append(el('i',null,r.label||''))}else{c.append(el('b',null,SYM[kind]));if(r.tag)c.append(el('i',null,r.tag))}
+      if(p.view.simple){c.append(el('b',null,SYM[kind]));c.append(el('i',null,r.label||''))}
+      else if(r.tag){td.className='tag';c.append(el('b',null,'✦'));c.append(el('i',null,r.tag+(kind==='open'?' ♡':kind==='ask'?' 💬':'')))}
+      else c.append(el('b',null,SYM[kind]))
       td.append(c);td.title=`${p.label} · ${key}`;tr.append(td)}
     body.append(tr)}
   table.append(body)}

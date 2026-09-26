@@ -47,6 +47,110 @@
   },
   "cosLeadDays": 30,
   "daysAhead": 90,
-  "bufferMinutes": 60,
-  "weeklyMax": 3
+  "bufferMinutes": 90,
+  "weeklyMax": 3,
+  "rules": {
+    "busy": [
+      "聚会",
+      "拍照",
+      "cos",
+      "【休息】"
+    ],
+    "booked": [
+      "已约"
+    ],
+    "rest": [
+      "躺平"
+    ],
+    "reserve": [
+      "预留"
+    ],
+    "restday": [
+      "调休"
+    ],
+    "workday": [
+      "补班"
+    ],
+    "semi": [
+      {
+        "word": "漫展"
+      },
+      {
+        "word": "回老家",
+        "location": "老家"
+      }
+    ]
+  },
+  "activities": [
+    {
+      "name": "吃饭",
+      "rest": [
+        "14:00-18:00"
+      ],
+      "sameCity": true,
+      "leadHours": 24
+    },
+    {
+      "name": "吃饭（工作日）",
+      "work": [
+        "18:30-20:00"
+      ],
+      "sameCity": true,
+      "leadHours": 2
+    },
+    {
+      "name": "逛街",
+      "rest": [
+        "14:00-18:00"
+      ],
+      "sameCity": true,
+      "leadHours": 24
+    },
+    {
+      "name": "拍照",
+      "rest": [
+        "14:00-18:00"
+      ],
+      "sameCity": true,
+      "leadHours": 24
+    },
+    {
+      "name": "cos（已有衣服）",
+      "rest": [],
+      "slot": false,
+      "sameCity": true,
+      "leadHours": 72
+    },
+    {
+      "name": "cos（新衣服）",
+      "rest": [],
+      "slot": false,
+      "sameCity": true,
+      "leadHours": 336
+    },
+    {
+      "name": "问问我",
+      "rest": [],
+      "work": [],
+      "slot": false,
+      "leadHours": 0,
+      "message": "{owner}，{date}有空吗？想找你～"
+    }
+  ],
+  "summaries": {
+    "漫展": "出去玩",
+    "回老家": "在家",
+    "拍照": "出去拍照",
+    "cos": "出去拍照",
+    "聚会": "出去玩",
+    "上班": "上班",
+    "空闲": "空闲",
+    "其他": "有安排"
+  },
+  "texts": {
+    "open": "",
+    "ask": "",
+    "none": "",
+    "hint": "以我回复确认为准"
+  }
 }
